@@ -849,7 +849,7 @@ Run:
 ```bash
 python3 scripts/recover.py show 019ff01c-a6cd-73f0-a62a-573d6262843a > /tmp/handoff.md; head -30 /tmp/handoff.md; wc -c /tmp/handoff.md
 ```
-Expected: header with title「分析近7天用户反馈」, cwd `/Users/JOYY/code/marki_client/marki-ios`, compacted warning; recent zone contains the final user message; footer stats present; size roughly ≤ ~65k chars (newest turn 60.4k + header/footer — floor rule makes it a soft ceiling).
+Expected: header with title「分析近7天用户反馈」, cwd `/Users/<user>/code/<project>`（真实会话路径）, compacted warning; recent zone contains the final user message; footer stats present; size roughly ≤ ~65k chars (newest turn 60.4k + header/footer — floor rule makes it a soft ceiling).
 
 - [ ] **Step 6: Commit**
 

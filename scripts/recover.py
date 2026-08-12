@@ -235,9 +235,9 @@ def run_self_test() -> int:
     os.makedirs(os.path.join(tmp, "sessions", "2026", "08", "11"))
     os.makedirs(os.path.join(tmp, "sessions", "2025"))
     os.makedirs(os.path.join(tmp, "archived_sessions"))
-    sid_modern = "019ff01c-a6cd-73f0-a62a-573d6262843a"
-    sid_legacy = "3e1a6ed1-6eba-45af-a755-922395d6feb2"
-    sid_arch = "019cb8bd-48b2-7913-8082-1b75d088f640"
+    sid_modern = "01234567-89ab-cdef-0123-456789abcdef"
+    sid_legacy = "fedcba98-7654-3210-fedc-ba9876543210"
+    sid_arch = "11111111-2222-3333-4444-555555555555"
     modern = os.path.join(tmp, "sessions", "2026", "08", "11",
                           "rollout-2026-08-11T17-17-17-" + sid_modern + ".jsonl")
     legacy = os.path.join(tmp, "sessions", "2025", "rollout-2025-06-27-" + sid_legacy + ".json")
