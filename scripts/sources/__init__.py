@@ -19,6 +19,11 @@ class Event:
     tool_args: Optional[str] = None
     tool_output: Optional[str] = None
 
+    @property
+    def tool_name(self) -> Optional[str]:
+        """Tool name for tool_call events (stored in text)."""
+        return self.text
+
 @dataclass
 class Session:
     meta: SessionMeta

@@ -12,7 +12,7 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from . import Session, SessionMeta, Source
+from . import Event, Session, SessionMeta, Source
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -101,4 +101,83 @@ class CodexSource(Source):
         return metas[:limit]
 
     def read_session(self, session_id: str) -> Session:
-        raise NotImplementedError  # Task 3
+        path = self._find_file(session_id)
+        if not path:
+            raise LookupError(
+                "未找到会话 %s：已扫描 %s 与 %s（含归档与 2025 旧格式）。\n"
+                "获取 ID 的方式：Codex CLI 退出时输出 `codex resume <id>`，或桌面端复制。"
+                % (session_id, self.dirs[0], self.dirs[1]))
+        meta, events, compacted, warnings = self._parse(path, session_id)
+        return Session(meta=meta, events=events, compacted=compacted, warnings=warnings)
+
+    def _parse(self, path: str, session_id: str) -> Tuple[SessionMeta, List[Event], bool, List[str]]:
+        meta = SessionMeta(id=session_id)
+        events: List[Event] = []
+        calls: Dict[str, int] = {}  # call_id -> index in events
+        compacted = False
+        warnings: List[str] = []
+        bad_lines = 0
+
+        with open(path) as fh:
+            for line in fh:
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    bad_lines += 1
+                    continue
+                t = d.get("type")
+                if t == "session_meta":
+                    p = d.get("payload") or {}
+                    meta = SessionMeta(
+                        id=session_id,
+                        cwd=p.get("cwd"),
+                        started_at=p.get("timestamp"),
+                        model=p.get("model") or p.get("model_provider"),
+                    )
+                elif t == "compacted":
+                    compacted = True
+                elif t == "response_item":
+                    self._handle_item(d.get("payload") or {}, events, calls, warnings)
+
+        if bad_lines:
+            warnings.append("解析中跳过 %d 个坏行（并发写入或中断所致）" % bad_lines)
+        return meta, events, compacted, warnings
+
+    @staticmethod
+    def _handle_item(it, events, calls, warnings) -> None:
+        k = it.get("type")
+        if k == "message":
+            role = it.get("role")
+            if role not in ("user", "assistant"):
+                return  # developer 消息（人格提示词、app-context 等）整体丢弃
+            text = "".join(
+                c.get("text", "") for c in it.get("content", [])
+                if isinstance(c, dict) and isinstance(c.get("text"), str)
+            )
+            if role == "user":
+                text = strip_wrapper_blocks(text)
+            events.append(Event(kind="user_msg" if role == "user" else "assistant_msg",
+                                role=role, text=text))
+        elif k in ("function_call", "custom_tool_call"):
+            args = it.get("arguments")
+            if args is None:
+                inp = it.get("input")
+                args = json.dumps(inp, ensure_ascii=False) if inp is not None else ""
+            events.append(Event(kind="tool_call", text=it.get("name"), tool_args=str(args)))
+            calls[it.get("call_id")] = len(events) - 1
+        elif k in ("function_call_output", "custom_tool_call_output"):
+            out = it.get("output", it.get("content", ""))
+            if not isinstance(out, str):
+                out = json.dumps(out, ensure_ascii=False)
+            idx = calls.get(it.get("call_id"))
+            if idx is not None:
+                events[idx].tool_output = out
+            else:
+                events.append(Event(kind="tool_output", text=out))
+                warnings.append("存在无法配对 call_id 的工具输出（已顺序追加）")
+        elif k == "reasoning":
+            summary = it.get("summary_text")
+            if summary:
+                events.append(Event(kind="reasoning", text=summary))
+            else:
+                events.append(Event(kind="reasoning", text="[思维链已加密，跳过]"))
