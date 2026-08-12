@@ -61,4 +61,5 @@ python3 scripts/recover.py self-test   # fixture-based self-test (no framework)
 ```
 
 Marketplace: `.claude-plugin/` manifests; local test with
-`claude plugin marketplace add .`.
+`claude plugin marketplace add ./` (bare `.` is rejected by the CLI —
+use `./` or an absolute path).
