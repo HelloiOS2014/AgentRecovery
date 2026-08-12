@@ -13,10 +13,7 @@
       "author": {
         "name": "HelloiOS2014"
       },
-      "source": {
-        "source": "github",
-        "repo": "HelloiOS2014/AgentRecovery"
-      }
+      "source": "./"
     }
   ]
 }
