@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agentrecovery",
+  "description": "Recover agent sessions across AI coding agents — resume a Codex session (by ID or picker) inside Claude Code with a budget-bounded hybrid context.",
+  "owner": {
+    "name": "HelloiOS2014",
+    "email": "helloios2014@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "recover",
+      "description": "/recover — resume a Codex session in Claude Code: list recent sessions or paste a session ID; hybrid render (recent turns verbatim within budget, older turns compressed).",
+      "author": {
+        "name": "HelloiOS2014"
+      },
+      "source": {
+        "source": "github",
+        "repo": "HelloiOS2014/AgentRecovery"
+      }
+    }
+  ]
+}
