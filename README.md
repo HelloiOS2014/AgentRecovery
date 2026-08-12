@@ -23,6 +23,10 @@ claude plugin install recover@agentrecovery --scope user
 /recover <session-id>       # recover a specific session
 ```
 
+The picker pins sessions from the current project to the top (marked `*`,
+with each session's original `cwd=` shown); `show` warns when the session
+belongs to a different project than the current directory.
+
 Session IDs: Codex CLI prints `codex resume <id>` on exit; the desktop app's
 sessions also appear in the picker (by title).
 

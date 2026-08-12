@@ -30,6 +30,20 @@ def _truncate(text: str, cap: int) -> str:
     return text[:cap] + TRUNC
 
 
+def _is_current(cwd: Optional[str], cur: str) -> bool:
+    """True when a session's original cwd is the directory we run in
+    (realpath so symlinked paths match)."""
+    if not cwd:
+        return False
+    return os.path.realpath(cwd) == os.path.realpath(cur)
+
+
+def _sort_by_current(metas: List["SessionMeta"], cur: str) -> List["SessionMeta"]:
+    """Stable sort: sessions from the current project first, rest by mtime."""
+    metas.sort(key=lambda m: _is_current(m.cwd, cur), reverse=True)
+    return metas
+
+
 def _file_changes(events: List[Event]) -> List[str]:
     seen, out = set(), []
     for e in events:
@@ -170,13 +184,15 @@ def render_session(session: Session, recent: int) -> str:
 def cmd_list(limit: int) -> int:
     from sources import SOURCES
 
+    cur = os.getcwd()
     for name, src_cls in SOURCES.items():
-        metas = src_cls().list_sessions(limit)
-        print("[%s] 最近 %d 个会话：输入序号或粘贴完整 session ID" % (name, len(metas)))
+        metas = _sort_by_current(src_cls().list_sessions(limit), cur)
+        print("[%s] 最近 %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % (name, len(metas)))
         for i, m in enumerate(metas, 1):
             title = m.title or "无标题"
-            print("%3d. %-28s %s  cwd=%s  (%s)" % (
-                i, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
+            mark = "*" if _is_current(m.cwd, cur) else " "
+            print("%s%3d. %-28s %s  cwd=%s  (%s)" % (
+                mark, i, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
         print("\n用法：/recover <序号> 或 /recover <完整session ID>")
         return 0
     return 1
@@ -186,11 +202,18 @@ def cmd_show(session_id: str, recent: int) -> int:
     src = SOURCES["codex"]()
     if session_id.isdigit() and int(session_id) >= 1:
         n = int(session_id)
-        metas = src.list_sessions(20)
+        metas = _sort_by_current(src.list_sessions(20), os.getcwd())
         if n > len(metas):
             print("序号 %d 超出范围（有效 1..%d）" % (n, len(metas)))
             return 1
         session_id = metas[n - 1].id
+    try:
+        session = src.read_session(session_id)
+    except LookupError as err:
+        print(str(err))
+        return 1
+    if session.meta.cwd and not _is_current(session.meta.cwd, os.getcwd()):
+        print("⚠️ 此会话来自其他项目：%s（当前目录：%s），路径请注意核对" % (session.meta.cwd, os.getcwd()))
     try:
         session = src.read_session(session_id)
     except LookupError as err:
@@ -269,6 +292,17 @@ def run_self_test() -> int:
     check("list finds legacy root .json", sid_legacy in ids)
     check("list finds archived jsonl", sid_arch in ids)
     check("list sorted by updated_at desc", metas[0].id == sid_modern)
+    cwd_by_id = {m.id: m.cwd for m in metas}
+    check("list fills cwd from first session_meta",
+          cwd_by_id.get(sid_modern) == "/x" and cwd_by_id.get(sid_legacy) == "/y" and cwd_by_id.get(sid_arch) == "/z")
+    from sources import SessionMeta
+    from recover import _is_current, _sort_by_current
+    check("_is_current matches by realpath", _is_current("/x", "/x") and not _is_current("/x", "/y"))
+    check("_is_current false for missing cwd", not _is_current(None, "/x"))
+    cur_sorted = _sort_by_current([
+        SessionMeta(id="a", cwd="/y"), SessionMeta(id="b", cwd="/x"), SessionMeta(id="c", cwd="/y"),
+    ], "/y")
+    check("current-project sessions pinned first", [m.id for m in cur_sorted] == ["a", "c", "b"])
     check("uuid extraction from modern name",
           _uuid_from_filename("rollout-2026-08-11T17-17-17-" + sid_modern + ".jsonl") == sid_modern)
     check("uuid extraction from legacy .json",

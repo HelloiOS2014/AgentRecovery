@@ -31,6 +31,8 @@ python3 "$RECOVER_PY" list
 ```
 
 Show the user the picker; ask which session (index number or full ID).
+Sessions from the current project are pinned to the top, marked with `*`;
+`cwd=` shows each session's original working directory.
 
 2. **Render the handoff**:
 

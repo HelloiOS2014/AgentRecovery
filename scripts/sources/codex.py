@@ -34,6 +34,22 @@ def _uuid_from_filename(name: str) -> Optional[str]:
     return m.group(0) if m else None
 
 
+def _first_cwd(path: str) -> Optional[str]:
+    """cwd from the first session_meta record (first few lines only)."""
+    try:
+        with open(path) as fh:
+            for line in fh:
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if d.get("type") == "session_meta":
+                    return (d.get("payload") or {}).get("cwd")
+    except OSError:
+        pass
+    return None
+
+
 class CodexSource(Source):
     name = "codex"
 
@@ -98,7 +114,12 @@ class CodexSource(Source):
                 updated_at=datetime.fromtimestamp(mtime).isoformat(timespec="seconds"),
             ))
         metas.sort(key=lambda m: m.updated_at or "", reverse=True)
-        return metas[:limit]
+        metas = metas[:limit]
+        # cwd lives in the first session_meta record; read it for the returned
+        # subset only (a few files, not the whole archive).
+        for m in metas:
+            m.cwd = _first_cwd(found[m.id][0])
+        return metas
 
     def read_session(self, session_id: str) -> Session:
         path = self._find_file(session_id)
