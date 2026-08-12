@@ -53,6 +53,8 @@ the render warns not to forward it. No content redaction is performed.
 - Windows is not supported.
 - Recovers context, not process state; images/attachments are not restored.
 - Compacted Codex sessions render without tool-call detail (flagged in the header).
+- First `/recover` run triggers permission confirmations for `find` and
+  `python3` — pre-allow them in Claude Code settings to avoid mid-flow stalls.
 
 ## Development
 

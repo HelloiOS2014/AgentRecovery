@@ -175,8 +175,8 @@ def cmd_list(limit: int) -> int:
         print("[%s] 最近 %d 个会话：输入序号或粘贴完整 session ID" % (name, len(metas)))
         for i, m in enumerate(metas, 1):
             title = m.title or "无标题"
-            print("%3d. %-28s %s  cwd=%s  (%s…)" % (
-                i, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id[:8]))
+            print("%3d. %-28s %s  cwd=%s  (%s)" % (
+                i, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
         print("\n用法：/recover <序号> 或 /recover <完整session ID>")
         return 0
     return 1
@@ -184,6 +184,13 @@ def cmd_list(limit: int) -> int:
 
 def cmd_show(session_id: str, recent: int) -> int:
     src = SOURCES["codex"]()
+    if session_id.isdigit() and int(session_id) >= 1:
+        n = int(session_id)
+        metas = src.list_sessions(20)
+        if n > len(metas):
+            print("序号 %d 超出范围（有效 1..%d）" % (n, len(metas)))
+            return 1
+        session_id = metas[n - 1].id
     try:
         session = src.read_session(session_id)
     except LookupError as err:
