@@ -1,6 +1,6 @@
 {
   "name": "recover",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "/recover — resume a Codex session in Claude Code. Recover context from a local Codex session (by ID or picker) with a budget-bounded hybrid render and continue the task.",
   "author": {
     "name": "HelloiOS2014",
