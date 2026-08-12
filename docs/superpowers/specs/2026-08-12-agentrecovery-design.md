@@ -63,7 +63,7 @@ class Source:
 - `session_meta`：cwd/模型/时间；**多记录时取最后一条**（压缩/重启会产生多条）
 - `response_item`：
   - message：**只渲染 `role=user` / `role=assistant`**；`role=developer` 整体丢弃（含 base_instructions 人格提示词、`<app-context>` 等，实测单文件 90/314 是 developer 消息，是最大噪声源）
-  - 用户消息内嵌的 `<environment_context>…</environment_context>` 块剥离（cwd 已在头部展示）
+  - **成块注入包装剥离**（实测验证）：`<environment_context>…</environment_context>`（内含 cwd/shell/date/timezone/workspace_roots 全部随块消失，cwd 已在头部展示）与 `<recommended_plugins>…</recommended_plugins>`（实测用户消息以该块开头）。**行内注解保留**：`<path>`、`<redacted>`、`<key>` 等是 Redact/转录内容的一部分，`<redacted>` 标记了密钥位置，不得剥离——只剥有闭合标签的已知包装块，不按标签名一刀切
   - function_call / custom_tool_call：名 + 参数（参数有字符上限，见预算）
   - function_call_output / custom_tool_call_output：输出（字符上限 + 截断标记）
   - reasoning：`summary_text` 有明文则渲染（上限 200 字符）；否则 `[思维链已加密，跳过]`
@@ -73,22 +73,23 @@ class Source:
 - **中断尾部**：最后一条是 tool_call 而无对应 output（额度耗尽被杀正是此形态）→ 渲染「调用了 X（无输出，可能被中断）」
 - 并发写入的坏行（半行 JSON）→ 跳过 + 警告
 
-## 上下文预算（硬性边界）
+## 上下文预算（硬性边界，常量已按真实数据校准）
 
-目标：单次渲染 ≤ ~30k chars（≈8k tokens），最坏情况不爆窗口。逐项上限：
+目标：单次渲染 ≤ ~60k chars（≈15k tokens），最坏情况不爆窗口。**校准依据**：对真实会话（394 条记录）按初版上限渲染实测 ≈147k chars（≈36k tokens），初版常量不成立，已下调并重测。逐项上限：
 
 | 项 | 上限 |
 |---|---|
 | 用户消息 | 1000 chars |
-| 助手消息 | 2000 chars |
-| 工具参数 | 800 chars |
-| 工具输出 | 2000 chars |
-| reasoning 摘要 | 200 chars |
+| 助手消息 | 1500 chars |
+| 工具参数 | 600 chars |
+| 工具输出 | 1200 chars |
+| reasoning 摘要 | 100 chars |
 
-- **最近区（最后 10 轮）**：逐项上限后，若总长超预算（~20k chars），从最旧开始整轮丢弃，保留最近的轮次（宁可丢旧保新——最近区是本设计存在的理由）
-- **历史区**：每轮 = 用户请求（200 截断）+ 助手首段（400）+ 工具名列表；总条目上限 50 轮，超出丢最旧
+- **最近区**：预算 40k chars。逐项上限后从最旧整轮丢弃直至预算内（宁可丢旧保新——最近区是本设计存在的理由）。**N=10 是上限而非承诺**：密集会话（实测单段 20+ 工具调用）实际可能只保住 3-7 轮
+- **历史区**：预算 20k chars；每轮 = 用户请求（200 截断）+ 助手首段（400）+ 工具名列表；总条目上限 50 轮，超出丢最旧
 - 「轮」= 以用户消息为起点的一段完成周期（Codex 在两条用户消息间可能自主跑 20+ 工具调用，单轮内容不可控，故预算按轮内总量封顶，而非按轮计数）
 - 实测会话跨天追加（同一文件可含 07-28→08-10 多天记录）：窗口按最后 N 轮切分即可，头部显示起止日期
+- 渲染末尾附截断统计（丢了几轮/几条超限），让模型知道信息完整性边界
 
 ## 数据流（/recover 流程）
 
@@ -172,3 +173,4 @@ README 必须注明：首次 `/recover` 会触发 find/python3 的权限确认�
 ## 修订记录
 
 - 2026-08-12 v2：合并独立设计审查（critical ×3 / important ×5 / minor ×6）。采纳：文件扫描为主索引、上下文预算硬边界、版本安全脚本定位、role 过滤与 environment_context 剥离、存档权限、配对规则、中断尾部渲染、多 session_meta 取最后、.json/.jsonl/归档三形态扫描。否决：审查员关于 session_index 已过时（2026-04-20）的论断——实测文件 mtime 与内容均更新至 2026-08-11、桌面会话在册；但「文件扫描为主」的修法仍因标题缺失/归档形态而采纳。补充（本会话独立验证）：archived_sessions 目录形态、index 重复 ID、2025 时代 .json 文件。
+- 2026-08-12 v3：冒烟测试驱动的校准（真实数据运行）。① 预算常量：真实会话按初版上限渲染实测 147k chars，初版目标 30k 不成立——逐项上限下调（助手 2k→1.5k、参数 800→600、输出 2k→1.2k、摘要 200→100），总量目标调至 ~60k chars（≈15k tokens），最近区 40k / 历史区 20k，N=10 明示为上限而非承诺，渲染末尾附截断统计。② 噪声剥离精确化：实测用户消息含 `<recommended_plugins>` 成块包装（与 environment_context 一样可剥），而行内注解 `<path>/<redacted>/<key>` 等是转录内容必须保留——规则改为「只剥有闭合标签的已知包装块」。③ 尾部形态抽样：200 个会话末尾均为 message/reasoning，无「tool_call 无 output」结尾——中断尾部渲染保留为防御，常见形态不触发。
