@@ -22,7 +22,7 @@ render of the conversation — recent turns verbatim within per-item caps
 (the newest turn is always kept), older turns compressed — then you continue
 the task.
 
-## Install
+### Install
 
 ```bash
 claude plugin marketplace add HelloiOS2014/AgentRecovery
@@ -31,7 +31,7 @@ claude plugin install recover@agentrecovery --scope user
 
 `--scope user` makes `/recover` available in every project.
 
-## Usage
+### Usage
 
 ```
 /recover                    # pick from the most recent sessions
@@ -45,7 +45,7 @@ belongs to a different project than the current directory.
 Session IDs: Codex CLI prints `codex resume <id>` on exit; the desktop app's
 sessions also appear in the picker (by title).
 
-## How it works
+### How it works
 
 - Reads local Codex session files (`~/.codex/sessions/**` and
   `~/.codex/archived_sessions/`) — no cloud calls, no Codex API.
@@ -59,13 +59,13 @@ sessions also appear in the picker (by title).
   A truncation-stats footer tells you what detail was dropped.
 - Recovery is deterministic: the script renders; the model continues.
 
-## Privacy / Security
+### Privacy / Security
 
 Recovered tool output may contain secrets (API keys, configs). The handoff
 is archived to `~/.claude/recover-handoffs/` with mode 600 (dir 0700), and
 the render warns not to forward it. No content redaction is performed.
 
-## Requirements & limits
+### Requirements & limits
 
 - macOS / Linux with `python3` (stdlib only, no dependencies).
 - Codex sessions must be local and plain JSONL (the default; no zstd).
@@ -91,8 +91,28 @@ codex plugin marketplace add /path/to/this/repo   # local; or the git URL when p
 codex plugin add recover-claude@agentrecovery
 ```
 
-Use in a Codex session: say "recover my Claude Code session", paste a Claude
-Code session UUID, or run `/recover-claude`.
+### Usage
+
+In a Codex session (CLI or Desktop), trigger recovery any of these ways:
+
+- 直接说：`恢复/继续 Claude Code 的会话`、`recover my Claude session`
+- 粘贴一个 Claude Code 会话 UUID
+- 输入 `/recover-claude`（或 `/recover`）——带参数时直接恢复指定会话：
+  `/recover-claude <会话ID或序号>`
+
+Codex 会运行脚本列出最近 20 个会话（当前项目的会话置顶，标 `*`，
+`cwd=` 显示每个会话的原工作目录），等你选定（序号或完整 ID）后渲染 handoff，
+然后从上次停下的地方继续任务。
+
+会话 ID 从哪来：`~/.claude/projects/<项目目录>/*.jsonl` 的文件名，或 Claude
+Code 里 `claude --resume` 的列表。
+
+首次运行注意事项：
+- 脚本读 `~/.claude/projects/`（工作区外），会触发权限确认——**必须批准**，
+  否则退出码为 `2`（沙箱拦截），codex 会停止而不是瞎编会话
+- 退出码含义：`0` = 正常列出（空列表也是真实结果）；`1` = 未检测到
+  Claude Code（`~/.claude/projects` 不存在）；`2` = 沙箱/权限拦截
+- 渲染完成后 handoff 存档在当前工作区 `.recover-handoff/<id>.md`
 
 ### How it works
 
