@@ -1,0 +1,16 @@
+{
+  "name": "recover-claude",
+  "version": "0.1.0",
+  "description": "Recover a Claude Code session into Codex — list local Claude Code sessions (by title or ID) and continue the unfinished task with a budget-bounded handoff.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Recover Claude Code Session",
+    "shortDescription": "Continue a Claude Code task here in Codex",
+    "category": "Developer Tools",
+    "defaultPrompt": [
+      "Recover my last Claude Code session",
+      "Continue the Claude Code task I was working on",
+      "Pick up where my Claude Code session left off"
+    ]
+  }
+}

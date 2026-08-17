@@ -1,4 +1,19 @@
-# AgentRecovery — `/recover` for Claude Code
+# AgentRecovery — cross-agent session recovery
+
+Two independent plugins, one repo:
+
+- **`recover`** (Claude Code marketplace, `.claude-plugin/`) — resume a
+  **Codex** session inside Claude Code.
+- **`recover-claude`** (Codex marketplace, `.agents/plugins/`) — recover a
+  **Claude Code** session into Codex.
+
+Each direction is a fully separate plugin with its own script tree; they only
+share the render core (`scripts/core.py`, packed into the Codex plugin by
+`scripts/pack-codex-plugin.sh`).
+
+---
+
+## Claude Code side: `/recover` (Codex → Claude Code)
 
 Resume a **Codex** session inside Claude Code. When quota runs out mid-task
 in Codex, switch here without losing context: `/recover` lists your recent
@@ -60,12 +75,60 @@ the render warns not to forward it. No content redaction is performed.
 - First `/recover` run triggers permission confirmations for `find` and
   `python3` — pre-allow them in Claude Code settings to avoid mid-flow stalls.
 
+---
+
+## Codex side: `@recover-claude` (Claude Code → Codex)
+
+Recover a **Claude Code** session into Codex. When Claude Code quota runs out
+or you want to finish in Codex, the plugin lists your recent Claude Code
+sessions (titles + `cwd=`, current-project sessions pinned on top) and
+renders the picked one as a budget-bounded handoff that Codex continues from.
+
+### Install
+
+```bash
+codex plugin marketplace add /path/to/this/repo   # local; or the git URL when published
+codex plugin add recover-claude@agentrecovery
+```
+
+Use in a Codex session: say "recover my Claude Code session", paste a Claude
+Code session UUID, or run `/recover-claude`.
+
+### How it works
+
+- Reads local Claude Code session files (`~/.claude/projects/*/*.jsonl`) — no
+  cloud calls. Honors `CLAUDE_CONFIG_DIR`.
+- Parser is Claude-specific: streams an assistant message across several
+  records (thinking / text / tool_use) back into one event sequence, pairs
+  `tool_result` blocks by `tool_use_id` without opening fake user turns,
+  resets at the last `compact_boundary` (pre-compact history stays in the
+  file and would otherwise double the transcript), and skips
+  `isMeta`/`isCompactSummary`/sidechain/attachment records with counts in the
+  warnings footer.
+- Exit codes are meaningful: `0` listed (empty is a real empty result),
+  `1` no Claude Code detected, `2` sandbox/permission blocked reading
+  `~/.claude` — never confuse blocked with empty.
+- The handoff is archived to `.recover-handoff/<id>.md` **inside the
+  workspace** (sandbox-writable), not `~/.claude` (outside the sandbox).
+
+### Notes
+
+- Runs `python3` — in Codex Desktop, `python3` must be on the non-interactive
+  PATH. First run triggers permission approvals; the skill stops cleanly if
+  they are denied (never uses sandbox bypass flags).
+- The render core (`scripts/core.py`) is shared with the Claude Code plugin;
+  `scripts/pack-codex-plugin.sh` syncs the copy and runs both sides'
+  self-tests. Run it after changing the core.
+
 ## Development
 
 ```bash
-python3 scripts/recover.py self-test   # fixture-based self-test (no framework)
+python3 scripts/recover.py self-test                          # Claude Code side
+python3 hosts/codex/plugins/recover-claude/scripts/recover-claude.py self-test  # Codex side
+./scripts/pack-codex-plugin.sh                                # sync core + double self-test
 ```
 
-Marketplace: `.claude-plugin/` manifests; local test with
-`claude plugin marketplace add ./` (bare `.` is rejected by the CLI —
-use `./` or an absolute path).
+Marketplaces: `.claude-plugin/` (Claude Code) and `.agents/plugins/`
+(Codex). Local test: `claude plugin marketplace add ./` (bare `.` rejected —
+use `./` or an absolute path) and `codex plugin marketplace add <abs-path>`
+(this codex version rejects `./` — use an absolute path).

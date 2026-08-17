@@ -1,0 +1,19 @@
+{
+  "name": "agentrecovery",
+  "interface": {
+    "displayName": "AgentRecovery (for Codex)"
+  },
+  "plugins": [
+    {
+      "name": "recover-claude",
+      "source": {
+        "source": "local",
+        "path": "./hosts/codex/plugins/recover-claude"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

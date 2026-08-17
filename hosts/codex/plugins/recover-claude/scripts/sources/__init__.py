@@ -1,7 +1,8 @@
-"""AgentRecovery source registry (B-lite interface).
+"""Codex-side AgentRecovery source registry.
 
-Shared types live in core.py (single source of truth, packed into both
-plugins at release time); this module re-exports them for the host parsers.
+Shared types come from core.py (packed into this plugin at release time; see
+scripts/pack-codex-plugin.sh in the repo root). This module re-exports them
+for the host parsers.
 """
 from typing import Dict, List
 
@@ -16,6 +17,6 @@ class Source:
     def read_session(self, session_id: str) -> Session:
         raise NotImplementedError
 
-from .codex import CodexSource  # noqa: E402  (import at end avoids circular import)
+from .claude import ClaudeSource  # noqa: E402
 
-SOURCES: Dict[str, type] = {"codex": CodexSource}
+SOURCES: Dict[str, type] = {"claude": ClaudeSource}
