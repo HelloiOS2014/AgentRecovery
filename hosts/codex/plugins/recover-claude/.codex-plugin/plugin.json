@@ -1,7 +1,7 @@
 {
   "name": "recover-claude",
-  "version": "0.1.0",
-  "description": "Recover a Claude Code session into Codex — list local Claude Code sessions (by title or ID) and continue the unfinished task with a budget-bounded handoff.",
+  "version": "0.1.1",
+  "description": "Recover a Codex or Claude Code session into Codex — merged picker over both local session stores, budget-bounded handoff, continue the unfinished task.",
   "skills": "./skills/",
   "interface": {
     "displayName": "Recover Claude Code Session",
