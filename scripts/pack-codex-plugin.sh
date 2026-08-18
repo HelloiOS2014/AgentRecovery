@@ -6,7 +6,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 SRC_ROOT=scripts
-DST_ROOT=hosts/codex/plugins/recover-claude/scripts
+DST_ROOT=hosts/codex/plugins/recover/scripts
 
 echo "== syncing core + sources -> Codex plugin"
 for f in core.py sources/__init__.py sources/codex.py sources/claude.py; do
@@ -25,6 +25,6 @@ echo "== self-test: Claude Code side"
 python3 scripts/recover.py self-test >/dev/null && echo "  ok" || { echo "FAIL"; exit 1; }
 
 echo "== self-test: Codex side"
-(cd hosts/codex/plugins/recover-claude/scripts && python3 recover-claude.py self-test >/dev/null && echo "  ok") || { echo "FAIL"; exit 1; }
+(cd hosts/codex/plugins/recover/scripts && python3 recover.py self-test >/dev/null && echo "  ok") || { echo "FAIL"; exit 1; }
 
 echo "PACK OK"

@@ -1,29 +1,27 @@
 ---
-name: recover-claude
-description: Use when the user wants to recover or continue a Codex or Claude Code session in Codex — they say "recover/恢复/继续 Claude Code 会话", "/recover", "/recover-claude", "resume my Claude session", "pick up where Claude left off", "刚才 Claude 的会话", "继续我之前的 Codex 会话", or paste a session UUID (Codex or Claude Code). Lists local sessions from both stores (titles + cwd), renders the picked one as a budget-bounded handoff, and continues the unfinished task. Same-agent handoffs included: continuing an older Codex session in a fresh one.
+name: recover
+description: Use when the user wants to recover or continue a Claude Code session in Codex — they say "recover/恢复/继续 Claude Code 会话", "/recover", "resume my Claude session", "pick up where Claude left off", "刚才 Claude 的会话", or paste a Claude Code session UUID. Lists local Claude Code sessions (titles + cwd), renders the picked one as a budget-bounded handoff, and continues the unfinished task. For Codex's own sessions, use /recover-self instead.
 ---
 
-# Recover Session (Codex)
+# Recover Claude Code Session (Codex)
 
-The user ran a task in **Codex** or **Claude Code** (CLI or desktop) and wants
-to continue it here. The recovered handoff text lands in this conversation as
-tool output — that is the context you continue from. The picker merges both
-stores: `[codex]` sessions from `~/.codex/sessions`, `[claude]` sessions from
-`~/.claude/projects`.
+The user ran a task in **Claude Code** (CLI or desktop) and wants to continue
+it here in Codex. The recovered handoff text lands in this conversation as
+tool output — that is the context you continue from.
 
 ## Locate the script
 
-The plugin is installed at `~/.codex/plugins/cache/agentrecovery/recover-claude/<version>/`.
+The plugin is installed at `~/.codex/plugins/cache/agentrecovery/recover/<version>/`.
 Find the newest installed copy (skip stale `unknown` trees):
 
 ```bash
-RECOVER_PY="$(find "$HOME/.codex/plugins/cache" -path "*recover-claude*" -name recover-claude.py \
+RECOVER_PY="$(find "$HOME/.codex/plugins/cache" -path "*agentrecovery*" -name recover.py \
   2>/dev/null | grep -v '/unknown/' | sort -V | tail -n1)"
 ```
 
 If `RECOVER_PY` is empty: the plugin files are missing or the sandbox blocked
-the `find`. Tell the user to run `codex plugin remove recover-claude@agentrecovery`
-and re-add it, or to check sandbox permissions — then **stop**. Do not invent
+the `find`. Tell the user to re-add the plugin from the agentrecovery
+marketplace, or to check sandbox permissions — then **stop**. Do not invent
 sessions.
 
 ## Flow
@@ -34,20 +32,18 @@ sessions.
 python3 "$RECOVER_PY" list
 ```
 
-   This reads `~/.claude/projects/` and `~/.codex/sessions/` — **outside the
-   workspace**. Expect an approval prompt; if the user denies it or the
-   command fails with a permission error, **stop** and explain that the
-   session files are not readable. Read the exit code and the per-source
-   warning lines (`❌` = that source was blocked):
-   - `0` = at least one source listed (may be empty; that is real, show it)
-   - `1` = nothing found in either store — if the user insists sessions
+   This reads `~/.claude/projects/` — **outside the workspace**. Expect an
+   approval prompt; if the user denies it or the command fails with a
+   permission error, **stop** and explain that Claude Code's session files are
+   not readable. Read the exit code:
+   - `0` = listed (may be empty; that is real, show it)
+   - `1` = no Claude Code sessions found — if the user insists sessions
      exist, the sandbox likely hid the home directory; stop and tell them
-   - `2` = every source permission/sandbox blocked — stop, do not guess
+   - `2` = permission/sandbox blocked — stop, do not guess
 
-   Show the user the picker; ask which session (index number or full ID —
-   indexes run continuously across both source blocks). Sessions from the
-   current project are pinned to the top, marked with `*`; `cwd=` shows each
-   session's original working directory.
+   Show the user the picker; ask which session (index number or full ID).
+   Sessions from the current project are pinned to the top, marked with `*`;
+   `cwd=` shows each session's original working directory.
 
 2. **Render the handoff**:
 

@@ -33,74 +33,61 @@ def _sort_by_current(metas: List["SessionMeta"], cur: str) -> List["SessionMeta"
     return metas
 
 
+# /recover targets the OTHER agent's sessions; /recover-self targets our own.
+OTHER = "codex"
+SELF = "claude"
+
+
 def _instances() -> Dict[str, Source]:
     return {name: cls() for name, cls in SOURCES.items()}
-
-
-def _list_all(limit: int, srcs: Optional[Dict[str, Source]] = None) -> tuple:
-    """Merged picker list: ([(source, meta)] in global display order, warnings).
-
-    Per-source problems (unreadable / not installed) surface as warning lines —
-    never as a silently empty list.
-    """
-    srcs = srcs or _instances()
-    cur = os.getcwd()
-    rows, warnings = [], []
-    for name, src in srcs.items():
-        try:
-            metas = _sort_by_current(src.list_sessions(limit), cur)
-        except PermissionError:
-            warnings.append("[%s] ❌ 无权限读取会话目录（沙箱/权限拦截，不是空列表）" % name)
-            continue
-        except OSError as err:
-            warnings.append("[%s] ❌ 读取失败：%s" % (name, err))
-            continue
-        rows.extend((name, m) for m in metas)
-    return rows, warnings
 
 
 def _hints_for(src_name: str) -> tuple:
     return FILE_TOOL_HINTS_CLAUDE if src_name == "claude" else FILE_TOOL_HINTS_CODEX
 
 
-def cmd_list(limit: int) -> int:
+def _pick(srcs: Dict[str, Source], self_mode: bool) -> tuple:
+    name = SELF if self_mode else OTHER
+    return name, srcs[name]
+
+
+def cmd_list(limit: int, self_mode: bool = False) -> int:
     srcs = _instances()
+    name, src = _pick(srcs, self_mode)
     cur = os.getcwd()
-    rows, warnings = _list_all(limit, srcs)
-    for w in warnings:
-        print(w)
-    if not rows:
-        print("未检测到任何可恢复的会话（相关 agent 的会话目录为空或不可读）")
+    try:
+        metas = _sort_by_current(src.list_sessions(limit), cur)
+    except PermissionError:
+        print("❌ 无权限读取 %s 会话目录（沙箱/权限拦截，不是空列表）" % name)
+        return 2
+    except OSError as err:
+        print("❌ 读取 %s 会话目录失败：%s" % (name, err))
+        return 2
+    if not metas:
+        print("未检测到 %s 会话（目录不存在或为空）。" % name)
         return 1
-    n = 0
-    for name in srcs:
-        group = [r for r in rows if r[0] == name]
-        if not group:
-            continue
-        print("[%s] %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % (name, len(group)))
-        for src, m in group:
-            n += 1
-            title = m.title or "无标题"
-            mark = "*" if _is_current(m.cwd, cur) else " "
-            print("%s%3d. %-28s %s  cwd=%s  (%s)" % (
-                mark, n, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
+    print("[%s] 最近 %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % (name, len(metas)))
+    for i, m in enumerate(metas, 1):
+        title = m.title or "无标题"
+        mark = "*" if _is_current(m.cwd, cur) else " "
+        print("%s%3d. %-28s %s  cwd=%s  (%s)" % (
+            mark, i, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
     print("\n用法：/recover <序号> 或 /recover <完整session ID>（跨源自动识别）")
     return 0
 
 
-def cmd_show(session_id: str, recent: int) -> int:
+def cmd_show(session_id: str, recent: int, self_mode: bool = False) -> int:
     srcs = _instances()
     if session_id.isdigit() and int(session_id) >= 1:
-        n = int(session_id)
-        rows, _ = _list_all(20, srcs)
-        if n < 1 or n > len(rows):
-            print("序号 %d 超出范围（有效 1..%d）" % (n, len(rows)))
+        name, src = _pick(srcs, self_mode)
+        metas = _sort_by_current(src.list_sessions(20), os.getcwd())
+        if int(session_id) > len(metas):
+            print("序号 %s 超出范围（有效 1..%d）" % (session_id, len(metas)))
             return 1
-        src_name, meta = rows[n - 1]
-        session_id = meta.id
+        session_id = metas[int(session_id) - 1].id
     else:
         # exact session ID: auto-detect across sources (SOURCES order)
-        src_name = None
+        name, src = None, None
         for name, src in srcs.items():
             try:
                 src.read_session(session_id)
@@ -109,12 +96,10 @@ def cmd_show(session_id: str, recent: int) -> int:
             except PermissionError:
                 print("❌ 无权限读取 %s 源（沙箱/权限拦截）" % name)
                 return 2
-            src_name = name
             break
-        if src_name is None:
+        if name is None:
             print("未找到会话 %s（已同时搜索 codex 与 claude 会话存储）" % session_id)
             return 1
-    src = srcs[src_name]
     try:
         session = src.read_session(session_id)
     except LookupError as err:
@@ -338,16 +323,16 @@ def main(argv: List[str]) -> int:
     if cmd == "self-test":
         return run_self_test()
     if cmd == "list":
-        return cmd_list(20)
+        return cmd_list(20, "--self" in argv)
     if cmd == "show" and len(argv) >= 3:
         recent = 10
         if "--recent" in argv:
             try:
                 recent = int(argv[argv.index("--recent") + 1])
             except (ValueError, IndexError):
-                print("用法：show <session-id> [--recent N]")
+                print("用法：show <session-id> [--recent N] [--self]")
                 return 2
-        return cmd_show(argv[2], recent)
+        return cmd_show(argv[2], recent, "--self" in argv)
     print(__doc__)
     return 2
 

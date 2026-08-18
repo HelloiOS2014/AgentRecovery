@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "recover-claude",
+      "name": "recover",
       "source": {
         "source": "local",
-        "path": "./hosts/codex/plugins/recover-claude"
+        "path": "./hosts/codex/plugins/recover"
       },
       "policy": {
         "installation": "AVAILABLE"
