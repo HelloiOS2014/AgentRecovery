@@ -2,7 +2,7 @@
 """AgentRecovery (Codex side) — recover Codex or Claude Code sessions into Codex.
 
 Usage:
-  python3 recover-claude.py list [--source codex|claude]
+  python3 recover-claude.py list
   python3 recover-claude.py show <session-id|index> [--recent N]
   python3 recover-claude.py self-test
 
@@ -46,8 +46,7 @@ def _hints_for(src_name: str) -> tuple:
     return FILE_TOOL_HINTS_CLAUDE if src_name == "claude" else FILE_TOOL_HINTS_CODEX
 
 
-def _list_all(limit: int, only: Optional[str] = None,
-              srcs: Optional[Dict[str, object]] = None) -> tuple:
+def _list_all(limit: int, srcs: Optional[Dict[str, object]] = None) -> tuple:
     """Merged picker list: ([(source, meta)] in global display order, warnings).
 
     Per-source problems (unreadable / not installed) surface as warning lines —
@@ -57,8 +56,6 @@ def _list_all(limit: int, only: Optional[str] = None,
     cur = os.getcwd()
     rows, warnings = [], []
     for name, src in srcs.items():
-        if only and name != only:
-            continue
         try:
             metas = _sort_by_current(src.list_sessions(limit), cur)
         except PermissionError:
@@ -72,10 +69,10 @@ def _list_all(limit: int, only: Optional[str] = None,
     return rows, warnings
 
 
-def cmd_list(limit: int, only: Optional[str] = None) -> int:
+def cmd_list(limit: int) -> int:
     srcs = _instances()
     cur = os.getcwd()
-    rows, warnings = _list_all(limit, only, srcs)
+    rows, warnings = _list_all(limit, srcs)
     blocked = any("❌" in w for w in warnings)
     for w in warnings:
         print(w)
@@ -87,8 +84,6 @@ def cmd_list(limit: int, only: Optional[str] = None) -> int:
         return 1
     n = 0
     for name in srcs:
-        if only and name != only:
-            continue
         group = [r for r in rows if r[0] == name]
         if not group:
             continue
@@ -107,7 +102,7 @@ def cmd_show(session_id: str, recent: int) -> int:
     srcs = _instances()
     if session_id.isdigit() and int(session_id) >= 1:
         n = int(session_id)
-        rows, _ = _list_all(20, None, srcs)
+        rows, _ = _list_all(20, srcs)
         if n < 1 or n > len(rows):
             print("序号 %d 超出范围（有效 1..%d）" % (n, len(rows)))
             return 1
@@ -327,8 +322,7 @@ def run_self_test() -> int:
           any("codex 会话任务" in (e.text or "") for e in cses.events))
 
     # merged picker: global numbering across sources, codex first
-    rows, warnings = _list_all(20, None,
-                               {"codex": cs, "claude": src})
+    rows, warnings = _list_all(20, {"codex": cs, "claude": src})
     names = [n for n, _ in rows]
     check("merged list: codex first, claude second", names[0] == "codex" and "claude" in names)
     check("merged list: both sessions present", cid in [m.id for _, m in rows]
@@ -351,17 +345,7 @@ def main(argv: List[str]) -> int:
     if cmd == "self-test":
         return run_self_test()
     if cmd == "list":
-        only = None
-        if "--source" in argv:
-            try:
-                only = argv[argv.index("--source") + 1]
-            except IndexError:
-                print("用法：list [--source codex|claude]")
-                return 2
-            if only not in SOURCES:
-                print("未知源 %s（可用：%s）" % (only, "、".join(SOURCES)))
-                return 2
-        return cmd_list(20, only)
+        return cmd_list(20)
     if cmd == "show" and len(argv) >= 3:
         recent = DEFAULT_RECENT
         if "--recent" in argv:

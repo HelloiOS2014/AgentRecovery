@@ -37,8 +37,6 @@ python3 "$RECOVER_PY" list
 Show the user the picker; ask which session (index number or full ID —
 indexes are numbered continuously across both source blocks). Sessions from
 the current project are pinned to the top, marked with `*`; `cwd=` shows each
-session's original working directory. If the user wants only one agent's
-sessions, use `list --source codex` or `list --source claude`.
 
 2. **Render the handoff**:
 
