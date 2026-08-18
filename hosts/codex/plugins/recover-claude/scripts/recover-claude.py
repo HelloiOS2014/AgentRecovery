@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
-"""AgentRecovery (Codex side) — recover Claude Code sessions into Codex.
+"""AgentRecovery (Codex side) — recover Codex or Claude Code sessions into Codex.
 
 Usage:
-  python3 recover-claude.py list
+  python3 recover-claude.py list [--source codex|claude]
   python3 recover-claude.py show <session-id|index> [--recent N]
   python3 recover-claude.py self-test
 
+Both session stores are merged in the picker (codex sessions from
+~/.codex/sessions, Claude Code sessions from ~/.claude/projects); an exact
+session ID is auto-detected across sources.
+
 Exit codes (list):
   0 = listed (may be empty — that is a real empty result)
-  1 = Claude Code not detected (~/.claude/projects missing)
-  2 = permission/sandbox blocked reading ~/.claude — NOT "no sessions"
+  1 = nothing found (no agent session stores present)
+  2 = permission/sandbox blocked reading the stores — NOT "no sessions"
 """
 import os
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from core import (DEFAULT_RECENT, Event, FILE_TOOL_HINTS_CLAUDE, FILELIST_CAP,
-                  Session, SessionMeta, render_session)
+from core import (DEFAULT_RECENT, Event, FILE_TOOL_HINTS_CLAUDE, FILE_TOOL_HINTS_CODEX,
+                  FILELIST_CAP, Session, SessionMeta, render_session)
 from sources import SOURCES
 
 ARCHIVE_REL = ".recover-handoff"
@@ -34,57 +38,109 @@ def _sort_by_current(metas: List[SessionMeta], cur: str) -> List[SessionMeta]:
     return metas
 
 
-def cmd_list(limit: int) -> int:
-    from sources.claude import ClaudeSource, default_projects_dir
+def _instances() -> Dict[str, object]:
+    return {name: cls() for name, cls in SOURCES.items()}
 
-    src = ClaudeSource()
+
+def _hints_for(src_name: str) -> tuple:
+    return FILE_TOOL_HINTS_CLAUDE if src_name == "claude" else FILE_TOOL_HINTS_CODEX
+
+
+def _list_all(limit: int, only: Optional[str] = None,
+              srcs: Optional[Dict[str, object]] = None) -> tuple:
+    """Merged picker list: ([(source, meta)] in global display order, warnings).
+
+    Per-source problems (unreadable / not installed) surface as warning lines —
+    never as a silently empty list.
+    """
+    srcs = srcs or _instances()
     cur = os.getcwd()
-    try:
-        metas = _sort_by_current(src.list_sessions(limit), cur)
-    except PermissionError:
-        print("❌ 无权限读取 %s —— 沙箱可能拦截了对 ~/.claude 的访问。"
-              "请批准 python3 的磁盘读取权限后重试。" % default_projects_dir())
-        return 2
-    except OSError as err:
-        print("❌ 读取 %s 失败：%s" % (default_projects_dir(), err))
-        return 2
-    if not metas:
-        print("⚠️ 未检测到 Claude Code 会话（%s 不存在或为空）。" % default_projects_dir())
-        print("   若你确定安装过 Claude Code 并工作过，请检查沙箱是否拦住了对 ~/.claude 的读取。")
+    rows, warnings = [], []
+    for name, src in srcs.items():
+        if only and name != only:
+            continue
+        try:
+            metas = _sort_by_current(src.list_sessions(limit), cur)
+        except PermissionError:
+            warnings.append("[%s] ❌ 无权限读取会话目录 —— 沙箱可能拦截了对该 agent 存储的访问；"
+                            "这不是「没有会话」。" % name)
+            continue
+        except OSError as err:
+            warnings.append("[%s] ❌ 读取失败：%s" % (name, err))
+            continue
+        rows.extend((name, m) for m in metas)
+    return rows, warnings
+
+
+def cmd_list(limit: int, only: Optional[str] = None) -> int:
+    srcs = _instances()
+    cur = os.getcwd()
+    rows, warnings = _list_all(limit, only, srcs)
+    blocked = any("❌" in w for w in warnings)
+    for w in warnings:
+        print(w)
+    if not rows:
+        if blocked:
+            print("所有会话目录均被权限/沙箱拦截——停止，不要当作没有会话处理。")
+            return 2
+        print("未检测到任何可恢复的会话（codex 与 claude 的会话目录均不存在或为空）。")
         return 1
-    print("[claude] 最近 %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % len(metas))
-    for i, m in enumerate(metas, 1):
-        title = m.title or "无标题"
-        mark = "*" if _is_current(m.cwd, cur) else " "
-        print("%s%3d. %-28s %s  cwd=%s  (%s)" % (
-            mark, i, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
-    print("\n用法：@recover-claude <序号> 或直接给完整 session ID")
+    n = 0
+    for name in srcs:
+        if only and name != only:
+            continue
+        group = [r for r in rows if r[0] == name]
+        if not group:
+            continue
+        print("[%s] %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % (name, len(group)))
+        for src, m in group:
+            n += 1
+            title = m.title or "无标题"
+            mark = "*" if _is_current(m.cwd, cur) else " "
+            print("%s%3d. %-28s %s  cwd=%s  (%s)" % (
+                mark, n, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
+    print("\n用法：@recover-claude <序号> 或直接给完整 session ID（跨源自动识别）")
     return 0
 
 
 def cmd_show(session_id: str, recent: int) -> int:
-    from sources.claude import ClaudeSource
-
-    src = ClaudeSource()
+    srcs = _instances()
     if session_id.isdigit() and int(session_id) >= 1:
         n = int(session_id)
-        metas = _sort_by_current(src.list_sessions(20), os.getcwd())
-        if n > len(metas):
-            print("序号 %d 超出范围（有效 1..%d）" % (n, len(metas)))
+        rows, _ = _list_all(20, None, srcs)
+        if n < 1 or n > len(rows):
+            print("序号 %d 超出范围（有效 1..%d）" % (n, len(rows)))
             return 1
-        session_id = metas[n - 1].id
+        src_name, meta = rows[n - 1]
+        session_id = meta.id
+    else:
+        src_name = None
+        for name, src in srcs.items():
+            try:
+                src.read_session(session_id)
+            except LookupError:
+                continue
+            except PermissionError:
+                print("❌ 无权限读取 %s 源（沙箱/权限拦截）" % name)
+                return 2
+            src_name = name
+            break
+        if src_name is None:
+            print("未找到会话 %s（已同时搜索 codex 与 claude 会话存储）" % session_id)
+            return 1
+    src = srcs[src_name]
     try:
         session = src.read_session(session_id)
     except LookupError as err:
         print(str(err))
         return 1
     except PermissionError:
-        print("❌ 无权限读取 ~/.claude —— 沙箱可能拦截了对它的访问，请批准磁盘读取权限。")
+        print("❌ 无权限读取 %s 源（沙箱/权限拦截）" % src_name)
         return 2
     if session.meta.cwd and not _is_current(session.meta.cwd, os.getcwd()):
         print("⚠️ 此会话来自其他项目：%s（当前目录：%s），路径请注意核对"
               % (session.meta.cwd, os.getcwd()))
-    text = render_session(session, recent, file_hints=FILE_TOOL_HINTS_CLAUDE)
+    text = render_session(session, recent, file_hints=_hints_for(src_name))
     print(text)
     try:
         os.makedirs(ARCHIVE_REL, mode=0o700, exist_ok=True)
@@ -250,6 +306,36 @@ def run_self_test() -> int:
     check("lookup of missing session raises LookupError",
           _expect_lookup(src, "00000000-0000-0000-0000-000000000000"))
 
+    # --- codex source: same-source recovery + merged picker ---
+    from sources.codex import CodexSource
+    cdir = os.path.join(tmp, "codex-sessions", "2026", "08", "13")
+    os.makedirs(cdir)
+    cid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    cpath = os.path.join(cdir, "rollout-2026-08-13T09-00-00-" + cid + ".jsonl")
+    with open(cpath, "w") as fh:
+        fh.write(json.dumps({"type": "session_meta", "payload": {"cwd": "/Users/JOYY/code/demo",
+                                                                 "timestamp": "2026-08-13T09:00:00Z"}}) + "\n")
+        fh.write(json.dumps({"type": "response_item", "payload": {"type": "message", "role": "user",
+                             "content": [{"type": "input_text", "text": "codex 会话任务"}]}}) + "\n")
+        fh.write(json.dumps({"type": "response_item", "payload": {"type": "message", "role": "assistant",
+                             "content": [{"type": "output_text", "text": "codex 助手回复"}]}}) + "\n")
+    cs = CodexSource(base_dirs=[os.path.join(tmp, "codex-sessions")])
+    cmeta = cs.list_sessions(20)
+    check("codex source lists its own sessions", any(m.id == cid for m in cmeta))
+    cses = cs.read_session(cid)
+    check("codex source parses its own session",
+          any("codex 会话任务" in (e.text or "") for e in cses.events))
+
+    # merged picker: global numbering across sources, codex first
+    rows, warnings = _list_all(20, None,
+                               {"codex": cs, "claude": src})
+    names = [n for n, _ in rows]
+    check("merged list: codex first, claude second", names[0] == "codex" and "claude" in names)
+    check("merged list: both sessions present", cid in [m.id for _, m in rows]
+          and sid in [m.id for _, m in rows])
+    check("_hints_for picks claude hints", _hints_for("claude") == FILE_TOOL_HINTS_CLAUDE
+          and _hints_for("codex") == FILE_TOOL_HINTS_CODEX)
+
     if failures:
         print("SELF-TEST FAILED: " + ", ".join(failures))
         return 1
@@ -265,7 +351,17 @@ def main(argv: List[str]) -> int:
     if cmd == "self-test":
         return run_self_test()
     if cmd == "list":
-        return cmd_list(20)
+        only = None
+        if "--source" in argv:
+            try:
+                only = argv[argv.index("--source") + 1]
+            except IndexError:
+                print("用法：list [--source codex|claude]")
+                return 2
+            if only not in SOURCES:
+                print("未知源 %s（可用：%s）" % (only, "、".join(SOURCES)))
+                return 2
+        return cmd_list(20, only)
     if cmd == "show" and len(argv) >= 3:
         recent = DEFAULT_RECENT
         if "--recent" in argv:

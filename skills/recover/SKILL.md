@@ -1,12 +1,16 @@
 ---
 name: recover
-description: Resume a Codex session inside Claude Code — recover the conversation context from a local Codex session (paste a session ID or pick from a list) and continue the unfinished task. Use when the user says they were working in Codex and need to switch/continue here, or invokes /recover, or pastes a codex session ID.
+description: Resume a Codex or Claude Code session inside Claude Code — recover conversation context from local sessions (paste a session ID or pick from a merged list) and continue the unfinished task. Use when the user says they were working in Codex or Claude Code and need to switch/continue here, invokes /recover, pastes a session ID, or wants to continue their own earlier Claude Code session without restarting context.
 ---
 
-# Recover Codex Session
+# Recover Session
 
-User ran a task in Codex (desktop or CLI) and must continue it here. The
-recovered context is injected into this conversation by this skill.
+The user ran a task in Codex or Claude Code (desktop or CLI) and wants to
+continue it here. The recovered context is injected into this conversation by
+this skill. The picker merges both stores: `[codex]` sessions from
+`~/.codex/sessions`, `[claude]` sessions from `~/.claude/projects` (this also
+covers same-agent handoffs — a fresh Claude Code session continuing an older
+one, with a budget-bounded handoff instead of a full reload).
 
 ## Locate the script (version-safe)
 
@@ -30,9 +34,11 @@ and stop.
 python3 "$RECOVER_PY" list
 ```
 
-Show the user the picker; ask which session (index number or full ID).
-Sessions from the current project are pinned to the top, marked with `*`;
-`cwd=` shows each session's original working directory.
+Show the user the picker; ask which session (index number or full ID —
+indexes are numbered continuously across both source blocks). Sessions from
+the current project are pinned to the top, marked with `*`; `cwd=` shows each
+session's original working directory. If the user wants only one agent's
+sessions, use `list --source codex` or `list --source claude`.
 
 2. **Render the handoff**:
 
@@ -40,7 +46,8 @@ Sessions from the current project are pinned to the top, marked with `*`;
 python3 "$RECOVER_PY" show <session-id> --recent 10
 ```
 
-(If the user's session was recent, use `--recent 10`; no flag needed otherwise.)
+(If the user's session was recent, use `--recent 10`; no flag needed
+otherwise. A full session ID is auto-detected across both sources.)
 
 3. **After the handoff is in the conversation**, follow these rules:
    - Summarize to the user in 3-5 lines: session title, original working
@@ -50,7 +57,7 @@ python3 "$RECOVER_PY" show <session-id> --recent 10
      original cwd (shown in the handoff header), tell the user explicitly
      before continuing — file paths in the handoff refer to the old cwd.
    - Check `git status` if the workspace is a git repo — there may be
-     uncommitted changes from the Codex session; mention them.
+     uncommitted changes from the previous session; mention them.
    - Then continue the task from where the session stopped. The last user
      request in the recent zone is the active goal.
    - Treat `[思维链已加密，跳过]` and truncated `…(截断)` items as known

@@ -11,9 +11,9 @@ import re
 import sys
 from typing import List, Optional
 
-from core import (CAPS, DEFAULT_RECENT, Event, FILE_TOOL_HINTS_CODEX, FILELIST_CAP,
-                  HIST_BUDGET, HIST_TURNS, RECENT_BUDGET, Session, SessionMeta, TRUNC,
-                  _file_changes, _truncate, render_session)
+from core import (CAPS, DEFAULT_RECENT, Event, FILE_TOOL_HINTS_CLAUDE, FILE_TOOL_HINTS_CODEX,
+                  FILELIST_CAP, HIST_BUDGET, HIST_TURNS, RECENT_BUDGET, Session, SessionMeta,
+                  TRUNC, _file_changes, _truncate, render_session)
 from sources import SOURCES, Session, Event
 
 ARCHIVE_DIR = os.path.join(os.path.expanduser("~"), ".claude", "recover-handoffs")
@@ -33,51 +33,109 @@ def _sort_by_current(metas: List["SessionMeta"], cur: str) -> List["SessionMeta"
     return metas
 
 
-def cmd_list(limit: int) -> int:
-    from sources import SOURCES
+def _instances() -> Dict[str, Source]:
+    return {name: cls() for name, cls in SOURCES.items()}
 
+
+def _list_all(limit: int, only: Optional[str] = None,
+              srcs: Optional[Dict[str, Source]] = None) -> tuple:
+    """Merged picker list: ([(source, meta)] in global display order, warnings).
+
+    Per-source problems (unreadable / not installed) surface as warning lines —
+    never as a silently empty list.
+    """
+    srcs = srcs or _instances()
     cur = os.getcwd()
-    for name, src_cls in SOURCES.items():
-        metas = _sort_by_current(src_cls().list_sessions(limit), cur)
-        print("[%s] 最近 %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % (name, len(metas)))
-        for i, m in enumerate(metas, 1):
+    rows, warnings = [], []
+    for name, src in srcs.items():
+        if only and name != only:
+            continue
+        try:
+            metas = _sort_by_current(src.list_sessions(limit), cur)
+        except PermissionError:
+            warnings.append("[%s] ❌ 无权限读取会话目录（沙箱/权限拦截，不是空列表）" % name)
+            continue
+        except OSError as err:
+            warnings.append("[%s] ❌ 读取失败：%s" % (name, err))
+            continue
+        rows.extend((name, m) for m in metas)
+    return rows, warnings
+
+
+def _hints_for(src_name: str) -> tuple:
+    return FILE_TOOL_HINTS_CLAUDE if src_name == "claude" else FILE_TOOL_HINTS_CODEX
+
+
+def cmd_list(limit: int, only: Optional[str] = None) -> int:
+    srcs = _instances()
+    cur = os.getcwd()
+    rows, warnings = _list_all(limit, only, srcs)
+    for w in warnings:
+        print(w)
+    if not rows:
+        print("未检测到任何可恢复的会话（相关 agent 的会话目录为空或不可读）")
+        return 1
+    n = 0
+    for name in srcs:
+        if only and name != only:
+            continue
+        group = [r for r in rows if r[0] == name]
+        if not group:
+            continue
+        print("[%s] %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % (name, len(group)))
+        for src, m in group:
+            n += 1
             title = m.title or "无标题"
             mark = "*" if _is_current(m.cwd, cur) else " "
             print("%s%3d. %-28s %s  cwd=%s  (%s)" % (
-                mark, i, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
-        print("\n用法：/recover <序号> 或 /recover <完整session ID>")
-        return 0
-    return 1
+                mark, n, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
+    print("\n用法：/recover <序号> 或 /recover <完整session ID>（跨源自动识别）")
+    return 0
 
 
 def cmd_show(session_id: str, recent: int) -> int:
-    src = SOURCES["codex"]()
+    srcs = _instances()
     if session_id.isdigit() and int(session_id) >= 1:
         n = int(session_id)
-        metas = _sort_by_current(src.list_sessions(20), os.getcwd())
-        if n > len(metas):
-            print("序号 %d 超出范围（有效 1..%d）" % (n, len(metas)))
+        rows, _ = _list_all(20, None, srcs)
+        if n < 1 or n > len(rows):
+            print("序号 %d 超出范围（有效 1..%d）" % (n, len(rows)))
             return 1
-        session_id = metas[n - 1].id
+        src_name, meta = rows[n - 1]
+        session_id = meta.id
+    else:
+        # exact session ID: auto-detect across sources (SOURCES order)
+        src_name = None
+        for name, src in srcs.items():
+            try:
+                src.read_session(session_id)
+            except LookupError:
+                continue
+            except PermissionError:
+                print("❌ 无权限读取 %s 源（沙箱/权限拦截）" % name)
+                return 2
+            src_name = name
+            break
+        if src_name is None:
+            print("未找到会话 %s（已同时搜索 codex 与 claude 会话存储）" % session_id)
+            return 1
+    src = srcs[src_name]
     try:
         session = src.read_session(session_id)
     except LookupError as err:
         print(str(err))
         return 1
+    except PermissionError:
+        print("❌ 无权限读取 %s 源（沙箱/权限拦截）" % src_name)
+        return 2
     if session.meta.cwd and not _is_current(session.meta.cwd, os.getcwd()):
         print("⚠️ 此会话来自其他项目：%s（当前目录：%s），路径请注意核对" % (session.meta.cwd, os.getcwd()))
-    try:
-        session = src.read_session(session_id)
-    except LookupError as err:
-        print(str(err))
-        return 1
     if not session.meta.title and hasattr(src, "_load_titles"):
-        # Task 3 缺口：标题只在 list_sessions 注入，read_session 不带；这里补一次
-        # 索引查询（recover.py 侧最小修补，不动 sources）。局限：仅 codex 源有 _load_titles。
+        # 标题只在 list_sessions 注入（codex 索引），read_session 补一次
         title = src._load_titles().get(session_id)
         if title:
             session.meta.title = title
-    text = render_session(session, recent)
+    text = render_session(session, recent, file_hints=_hints_for(src_name))
     print(text)
     try:
         os.makedirs(ARCHIVE_DIR, mode=0o700, exist_ok=True)
@@ -285,7 +343,17 @@ def main(argv: List[str]) -> int:
     if cmd == "self-test":
         return run_self_test()
     if cmd == "list":
-        return cmd_list(20)
+        only = None
+        if "--source" in argv:
+            try:
+                only = argv[argv.index("--source") + 1]
+            except IndexError:
+                print("用法：list [--source codex|claude]")
+                return 2
+            if only not in SOURCES:
+                print("未知源 %s（可用：%s）" % (only, "、".join(SOURCES)))
+                return 2
+        return cmd_list(20, only)
     if cmd == "show" and len(argv) >= 3:
         recent = 10
         if "--recent" in argv:

@@ -16,6 +16,9 @@ class Source:
     def read_session(self, session_id: str) -> Session:
         raise NotImplementedError
 
-from .codex import CodexSource  # noqa: E402  (import at end avoids circular import)
+from .claude import ClaudeSource  # noqa: E402  (import at end avoids circular import)
+from .codex import CodexSource  # noqa: E402
 
-SOURCES: Dict[str, type] = {"codex": CodexSource}
+# Both parsers ship in both plugins: each side can recover the other agent's
+# sessions and its own (cross-project / handoff scenarios).
+SOURCES: Dict[str, type] = {"codex": CodexSource, "claude": ClaudeSource}

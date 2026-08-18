@@ -8,16 +8,40 @@ Two independent plugins, one repo:
   **Claude Code** session into Codex.
 
 Each direction is a fully separate plugin with its own script tree; they only
-share the render core (`scripts/core.py`, packed into the Codex plugin by
+share the render core and session parsers (`scripts/core.py` +
+`scripts/sources/`, packed into the Codex plugin by
 `scripts/pack-codex-plugin.sh`).
 
 ---
 
-## Claude Code side: `/recover` (Codex → Claude Code)
+## Same-agent recovery（同 agent 会话延续）
 
-Resume a **Codex** session inside Claude Code. When quota runs out mid-task
-in Codex, switch here without losing context: `/recover` lists your recent
-Codex sessions (or takes a session ID) and injects a budget-bounded hybrid
+两个 agent **原生**就有无损恢复，优先用它们：
+
+```bash
+codex resume               # Codex: picker；codex resume <uuid> 任意项目；--last 续最近
+claude --continue          # Claude Code: 续最近会话；--resume 当前项目 picker
+```
+
+原生 resume 恢复完整会话文件。本工具在两种场景下补充原生能力：
+
+- **跨项目恢复**：codex 的 resume 支持任意项目，claude 的 `--resume` 只列当前
+  项目——两个插件的 picker 都显示 `cwd=` 并从任意目录按会话 ID 恢复
+- **会话整理 / 手记**：不想完整重载上下文时，把长会话渲染成预算受限的
+  handoff（最近轮次逐项保真 + 历史压缩 + 文件清单 + 截断统计），开新会话
+  带着手记延续，省 token
+
+两个插件的 picker 都是**合并列表**（`[codex]` / `[claude]` 两个区块，序号
+连续编号，当前项目置顶标 `*`）；完整 session ID 跨源自动识别，不用指定来源。
+
+---
+
+## Claude Code side: `/recover` (Codex / Claude → Claude Code)
+
+Resume a **Codex** session (or continue an earlier Claude Code session) inside
+Claude Code. When quota runs out mid-task in another agent, or you want to
+start fresh without rebuilding context: `/recover` lists your recent sessions
+from both stores (or takes a session ID) and injects a budget-bounded hybrid
 render of the conversation — recent turns verbatim within per-item caps
 (the newest turn is always kept), older turns compressed — then you continue
 the task.
@@ -42,8 +66,9 @@ The picker pins sessions from the current project to the top (marked `*`,
 with each session's original `cwd=` shown); `show` warns when the session
 belongs to a different project than the current directory.
 
-Session IDs: Codex CLI prints `codex resume <id>` on exit; the desktop app's
-sessions also appear in the picker (by title).
+Session IDs: Codex CLI prints `codex resume <id>` on exit; Claude Code
+session IDs are the `~/.claude/projects/<项目>/*.jsonl` filenames. A full ID is
+auto-detected across both stores.
 
 ### How it works
 
@@ -77,11 +102,12 @@ the render warns not to forward it. No content redaction is performed.
 
 ---
 
-## Codex side: `@recover-claude` (Claude Code → Codex)
+## Codex side: `@recover-claude` (Codex / Claude → Codex)
 
-Recover a **Claude Code** session into Codex. When Claude Code quota runs out
-or you want to finish in Codex, the plugin lists your recent Claude Code
-sessions (titles + `cwd=`, current-project sessions pinned on top) and
+Recover a **Claude Code** or earlier **Codex** session into Codex. When quota
+runs out in Claude Code, you want to finish here, or you want a fresh Codex
+session to continue an older one, the plugin lists your recent sessions from
+both stores (titles + `cwd=`, current-project sessions pinned on top) and
 renders the picked one as a budget-bounded handoff that Codex continues from.
 
 ### Install
@@ -95,29 +121,30 @@ codex plugin add recover-claude@agentrecovery
 
 In a Codex session (CLI or Desktop), trigger recovery any of these ways:
 
-- 直接说：`恢复/继续 Claude Code 的会话`、`recover my Claude session`
-- 粘贴一个 Claude Code 会话 UUID
+- 直接说：`恢复/继续 Claude Code 的会话`、`recover my Claude session`、
+  `继续我之前的 Codex 会话`
+- 粘贴一个会话 UUID（Codex 或 Claude Code 的）
 - 输入 `/recover-claude`（或 `/recover`）——带参数时直接恢复指定会话：
   `/recover-claude <会话ID或序号>`
 
-Codex 会运行脚本列出最近 20 个会话（当前项目的会话置顶，标 `*`，
-`cwd=` 显示每个会话的原工作目录），等你选定（序号或完整 ID）后渲染 handoff，
-然后从上次停下的地方继续任务。
+Codex 会运行脚本列出最近 20 个会话（`[codex]` / `[claude]` 两个区块、
+当前项目的会话置顶标 `*`、`cwd=` 显示原工作目录、序号连续编号），等你选定
+（序号或完整 ID，跨源自动识别）后渲染 handoff，然后从上次停下的地方继续任务。
 
-会话 ID 从哪来：`~/.claude/projects/<项目目录>/*.jsonl` 的文件名，或 Claude
-Code 里 `claude --resume` 的列表。
+会话 ID 从哪来：Codex 退出时打印的 `codex resume <id>`，或
+`~/.claude/projects/<项目目录>/*.jsonl` 的文件名（Claude Code 侧）。
 
 首次运行注意事项：
 - 脚本读 `~/.claude/projects/`（工作区外），会触发权限确认——**必须批准**，
   否则退出码为 `2`（沙箱拦截），codex 会停止而不是瞎编会话
-- 退出码含义：`0` = 正常列出（空列表也是真实结果）；`1` = 未检测到
-  Claude Code（`~/.claude/projects` 不存在）；`2` = 沙箱/权限拦截
+- 退出码含义：`0` = 至少一源正常列出（空列表也是真实结果）；`1` = 两个
+  存储都无会话；`2` = 沙箱/权限拦截（源级 `❌` 警告行指出被挡的是哪个）
 - 渲染完成后 handoff 存档在当前工作区 `.recover-handoff/<id>.md`
 
 ### How it works
 
-- Reads local Claude Code session files (`~/.claude/projects/*/*.jsonl`) — no
-  cloud calls. Honors `CLAUDE_CONFIG_DIR`.
+- Reads local session files — `~/.codex/sessions/**` and
+  `~/.claude/projects/*/*.jsonl` — no cloud calls. Honors `CLAUDE_CONFIG_DIR`.
 - Parser is Claude-specific: streams an assistant message across several
   records (thinking / text / tool_use) back into one event sequence, pairs
   `tool_result` blocks by `tool_use_id` without opening fake user turns,
