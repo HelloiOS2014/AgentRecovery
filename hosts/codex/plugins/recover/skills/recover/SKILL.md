@@ -15,21 +15,22 @@ The plugin is installed at `~/.codex/plugins/cache/agentrecovery/recover/<versio
 Find the newest installed copy (skip stale `unknown` trees):
 
 ```bash
-RECOVER_PY="$(find "$HOME/.codex/plugins/cache" -path "*agentrecovery*" -name recover.py \
+RECOVER_RUN="$(find "$HOME/.codex/plugins/cache" -path "*agentrecovery*" -name recover-run.sh \
   2>/dev/null | grep -v '/unknown/' | sort -V | tail -n1)"
 ```
 
-If `RECOVER_PY` is empty: the plugin files are missing or the sandbox blocked
+If `RECOVER_RUN` is empty: the plugin files are missing or the sandbox blocked
 the `find`. Tell the user to re-add the plugin from the agentrecovery
 marketplace, or to check sandbox permissions — then **stop**. Do not invent
-sessions.
+sessions. First run downloads a binary from GitHub Releases; exit 2 means
+blocked/download failed, not an empty list.
 
 ## Flow
 
 1. **List sessions** (unless the user already gave a session ID):
 
 ```bash
-python3 "$RECOVER_PY" list
+"$RECOVER_RUN" --host codex list
 ```
 
    This reads `~/.claude/projects/` — **outside the workspace**. Expect an
@@ -48,7 +49,7 @@ python3 "$RECOVER_PY" list
 2. **Render the handoff**:
 
 ```bash
-python3 "$RECOVER_PY" show <session-id> --recent 10
+"$RECOVER_RUN" --host codex show <session-id> --recent 10
 ```
 
    (If the user's session was recent, use `--recent 10`; otherwise no flag.

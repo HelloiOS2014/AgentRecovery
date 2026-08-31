@@ -1,6 +1,6 @@
 {
   "name": "agent-recovery",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Recover sessions across Claude Code, Codex, and Pi.",
   "license": "MIT",
   "keywords": [

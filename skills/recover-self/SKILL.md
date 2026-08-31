@@ -17,12 +17,12 @@ project without cd-ing there).
 Multiple plugin versions accumulate in the cache; always run the newest:
 
 ```bash
-RECOVER_PY="$(find "$HOME/.claude/plugins" -path "*agentrecovery/*" -name recover.py 2>/dev/null \
+RECOVER_RUN="$(find "$HOME/.claude/plugins" -path "*agentrecovery/*" -name recover-run.sh 2>/dev/null \
   | grep '/cache/' \
   | sort -V | tail -n1)"
 ```
 
-If `RECOVER_PY` is empty, the plugin is not installed or files are missing —
+If `RECOVER_RUN` is empty, the plugin is not installed or files are missing —
 tell the user to run `claude plugin install recover@agentrecovery --scope user`
 and stop.
 
@@ -31,7 +31,7 @@ and stop.
 1. **List sessions** (if the user did not give a session ID):
 
 ```bash
-python3 "$RECOVER_PY" list --self
+"$RECOVER_RUN" --host claude list --self
 ```
 
 Show the user the picker; ask which session (index number or full ID).
@@ -41,7 +41,7 @@ Sessions from the current project are pinned to the top, marked with `*`;
 2. **Render the handoff**:
 
 ```bash
-python3 "$RECOVER_PY" show <session-id> --recent 10 --self
+"$RECOVER_RUN" --host claude show <session-id> --recent 10 --self
 ```
 
 (If the user's session was recent, use `--recent 10`; no flag needed

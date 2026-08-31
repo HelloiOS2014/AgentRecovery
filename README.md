@@ -11,9 +11,8 @@ One repo, three hosts:
   (TUI picker + injected handoff, not a skill).
 
 `/recover` always targets **other** agents, `/recover-self` targets the
-**same** agent. All three share the render core and parsers
-(`scripts/core.py` + `scripts/sources/`, packed by
-`scripts/pack-codex-plugin.sh`).
+**same** agent. All three share one Go binary (`cmd/recover`); hosts
+download the matching GitHub Release once and cache it.
 
 ---
 
@@ -96,13 +95,13 @@ the render warns not to forward it. No content redaction is performed.
 
 ### Requirements & limits
 
-- macOS / Linux with `python3` (stdlib only, no dependencies).
+- macOS / Linux. First run downloads `recover-<os>-<arch>` from GitHub
+  Releases into `~/.cache/agent-recovery/v<version>/` (needs network once).
 - Codex sessions must be local and plain JSONL (the default; no zstd).
-- Windows is not supported.
+- Windows is not supported yet.
 - Recovers context, not process state; images/attachments are not restored.
 - Compacted Codex sessions render without tool-call detail (flagged in the header).
-- First `/recover` run triggers permission confirmations for `find` and
-  `python3` — pre-allow them in Claude Code settings to avoid mid-flow stalls.
+- First `/recover` run may prompt to allow network + reading session dirs.
 
 ---
 
@@ -165,12 +164,11 @@ handoff，然后从上次停下的地方继续任务。
 
 ### Notes
 
-- Runs `python3` — in Codex Desktop, `python3` must be on the non-interactive
-  PATH. First run triggers permission approvals; the skill stops cleanly if
-  they are denied (never uses sandbox bypass flags).
-- The render core (`scripts/core.py`) is shared with the Claude Code plugin
-  and the Pi package; `scripts/pack-codex-plugin.sh` syncs the copies and
-  runs every host's self-test. Run it after changing the core.
+- First run downloads the recover binary (no `python3`). Permission
+  prompts for network and `~/.claude` / `~/.codex` must be approved; the
+  skill stops cleanly if they are denied.
+- Shared core is `cmd/recover` (Go). `scripts/pack-codex-plugin.sh` copies
+  the launcher into host packages and runs `recover self-test`.
 
 ## Pi side: `/recover` + `/recover-self`
 
@@ -185,7 +183,7 @@ reload of the current project.
 pi install git:github.com/HelloiOS2014/AgentRecovery
 ```
 
-Requires `python3` on PATH (stdlib only).
+First `/recover` downloads the platform binary from GitHub Releases.
 
 ### Usage
 
@@ -199,10 +197,12 @@ The picker pins the current project (`*`) and tags each row `[claude]` /
 ## Development
 
 ```bash
-python3 scripts/recover.py self-test                          # Claude Code side
-python3 hosts/codex/plugins/recover/scripts/recover.py self-test          # Codex side
-python3 hosts/pi/package/scripts/recover.py self-test                     # Pi side
-./scripts/pack-codex-plugin.sh                                # sync core + all self-tests
+go test ./...
+go build -o scripts/recover ./cmd/recover
+./scripts/recover self-test
+./scripts/pack-codex-plugin.sh          # copy launcher + self-test
+./scripts/build-release.sh              # dist/ binaries for GitHub Releases
+git tag v0.4.0 && git push --tags       # CI uploads darwin/linux amd64+arm64
 ```
 
 Marketplaces: `.claude-plugin/` (Claude Code) and `.agents/plugins/`

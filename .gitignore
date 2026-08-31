@@ -1,3 +1,7 @@
 .worktrees/
 __pycache__/
 .recover-handoff/
+/dist/
+/recover
+/scripts/recover
+*.exe

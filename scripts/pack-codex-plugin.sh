@@ -1,42 +1,22 @@
 #!/bin/sh
-# Pack the shared core (render core + all session parsers) into the Codex
-# plugin and the Pi package, verify byte-identical, and run every host's
-# self-test. Run after any change to scripts/core.py or scripts/sources/
-# (and before republishing).
+# Copy the binary launcher into host packages and run Go self-test.
+# Runtime hosts no longer ship Python.
 set -eu
 cd "$(dirname "$0")/.."
 
-SRC_ROOT=scripts
-DST_CODEX=hosts/codex/plugins/recover/scripts
-DST_PI=hosts/pi/package/scripts
+VERSION=$(tr -d ' \n' < VERSION)
+echo "== version $VERSION"
 
-FILES="core.py sources/__init__.py sources/codex.py sources/claude.py sources/pi.py"
-
-echo "== syncing core + sources -> Codex plugin + Pi package"
-for DST in "$DST_CODEX" "$DST_PI"; do
-  mkdir -p "$DST/sources"
-  for f in $FILES; do
-    cp "$SRC_ROOT/$f" "$DST/$f"
-  done
+for DST in hosts/codex/plugins/recover/scripts hosts/pi/package/scripts; do
+  mkdir -p "$DST"
+  cp scripts/recover-run.sh "$DST/recover-run.sh"
+  cp VERSION "$DST/VERSION"
+  chmod +x "$DST/recover-run.sh"
 done
 
-echo "== sha256"
-for f in $FILES; do
-  S1=$(shasum -a 256 "$SRC_ROOT/$f" | cut -d' ' -f1)
-  for DST in "$DST_CODEX" "$DST_PI"; do
-    S2=$(shasum -a 256 "$DST/$f" | cut -d' ' -f1)
-    [ "$S1" = "$S2" ] || { echo "FAIL: $f differs in $DST"; exit 1; }
-  done
-  echo "  $S1  $f"
-done
-
-echo "== self-test: Claude Code side"
-python3 scripts/recover.py self-test >/dev/null && echo "  ok" || { echo "FAIL"; exit 1; }
-
-echo "== self-test: Codex side"
-(cd hosts/codex/plugins/recover/scripts && python3 recover.py self-test >/dev/null && echo "  ok") || { echo "FAIL"; exit 1; }
-
-echo "== self-test: Pi side"
-(cd hosts/pi/package/scripts && python3 recover.py self-test >/dev/null && echo "  ok") || { echo "FAIL"; exit 1; }
+echo "== go self-test"
+go test ./...
+go build -o /tmp/recover-agentrecovery ./cmd/recover
+/tmp/recover-agentrecovery self-test >/dev/null && echo "  ok"
 
 echo "PACK OK"

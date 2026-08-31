@@ -1,0 +1,32 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Build
+        run: ./scripts/build-release.sh
+      - name: Self-test (linux)
+        run: ./dist/recover-linux-amd64 self-test
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/recover-darwin-arm64
+            dist/recover-darwin-amd64
+            dist/recover-linux-arm64
+            dist/recover-linux-amd64
+            dist/checksums.txt
+          generate_release_notes: true
