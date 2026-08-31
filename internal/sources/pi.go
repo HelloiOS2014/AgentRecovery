@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/HelloiOS2014/AgentRecovery/internal/core"
@@ -110,35 +109,22 @@ func contentText(content any) (string, int) {
 	return strings.Join(parts, "\n"), nImg
 }
 
-func (p *Pi) ListSessions(limit int) ([]core.SessionMeta, error) {
+func (p *Pi) ListSessions(limit int, preferCwd string) ([]core.SessionMeta, error) {
 	files, err := p.sessionFiles()
 	if err != nil {
 		return nil, err
 	}
-	type pair struct {
-		id, path string
-		mtime    int64
-	}
-	var order []pair
+	var hits []fileHit
 	for sid, path := range files {
 		info, err := os.Stat(path)
 		if err != nil {
 			continue
 		}
-		order = append(order, pair{sid, path, info.ModTime().UnixNano()})
+		hits = append(hits, fileHit{ID: sid, Path: path, Mtime: info.ModTime().UnixNano()})
 	}
-	sort.Slice(order, func(i, j int) bool { return order[i].mtime > order[j].mtime })
-	if limit > 0 && len(order) > limit {
-		order = order[:limit]
-	}
-	var metas []core.SessionMeta
-	for _, x := range order {
-		m := p.scanMeta(x.path, x.id)
-		info, _ := os.Stat(x.path)
-		m.UpdatedAt = isoSec(info.ModTime())
-		metas = append(metas, m)
-	}
-	return metas, nil
+	return selectHits(hits, limit, preferCwd, func(path, id string) core.SessionMeta {
+		return p.scanMeta(path, id)
+	}), nil
 }
 
 func (p *Pi) scanMeta(path, sid string) core.SessionMeta {

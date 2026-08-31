@@ -98,8 +98,7 @@ func cmdList(host string, limit int, self, asJSON bool) int {
 	srcs := sources.Defaults()
 	names := sources.TargetNames(host, self)
 	cur, _ := os.Getwd()
-	metas, blocked := sources.CollectMetas(srcs, names, limit)
-	metas = sources.SortByCurrent(metas, cur)
+	metas, blocked := sources.CollectMetas(srcs, names, limit, cur)
 	if asJSON {
 		type row struct {
 			Source    string `json:"source"`
@@ -201,9 +200,8 @@ func cmdShow(host, sessionID string, recent int, self, asJSON bool) int {
 	var src sources.Source
 	if n, err := strconv.Atoi(sessionID); err == nil && n >= 1 {
 		names := sources.TargetNames(host, self)
-		metas, _ := sources.CollectMetas(srcs, names, 20)
 		cur, _ := os.Getwd()
-		metas = sources.SortByCurrent(metas, cur)
+		metas, _ := sources.CollectMetas(srcs, names, 20, cur)
 		if n > len(metas) {
 			return fail(fmt.Sprintf("序号 %s 超出范围（有效 1..%d）", sessionID, len(metas)), asJSON, 1)
 		}

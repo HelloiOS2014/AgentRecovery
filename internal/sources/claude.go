@@ -81,38 +81,26 @@ func (c *Claude) sessionFiles() (map[string]string, error) {
 	return found, nil
 }
 
-func (c *Claude) ListSessions(limit int) ([]core.SessionMeta, error) {
+func (c *Claude) ListSessions(limit int, preferCwd string) ([]core.SessionMeta, error) {
 	files, err := c.sessionFiles()
 	if err != nil {
 		return nil, err
 	}
-	type pair struct {
-		id, path string
-		mtime    int64
-	}
-	var order []pair
+	var hits []fileHit
 	for sid, path := range files {
 		info, err := os.Stat(path)
 		if err != nil {
 			continue
 		}
-		order = append(order, pair{sid, path, info.ModTime().UnixNano()})
+		hits = append(hits, fileHit{ID: sid, Path: path, Mtime: info.ModTime().UnixNano()})
 	}
-	sort.Slice(order, func(i, j int) bool { return order[i].mtime > order[j].mtime })
-	if limit > 0 && len(order) > limit {
-		order = order[:limit]
-	}
-	var metas []core.SessionMeta
-	for _, p := range order {
-		title, cwd, started, models := c.scanMeta(p.path)
-		model := strings.Join(sortedKeys(models), ", ")
-		info, _ := os.Stat(p.path)
-		metas = append(metas, core.SessionMeta{
-			ID: p.id, Title: title, Cwd: cwd, StartedAt: started,
-			UpdatedAt: isoSec(info.ModTime()), Model: model,
-		})
-	}
-	return metas, nil
+	return selectHits(hits, limit, preferCwd, func(path, id string) core.SessionMeta {
+		title, cwd, started, models := c.scanMeta(path)
+		return core.SessionMeta{
+			ID: id, Title: title, Cwd: cwd, StartedAt: started,
+			Model: strings.Join(sortedKeys(models), ", "),
+		}
+	}), nil
 }
 
 func sortedKeys(m map[string]bool) []string {

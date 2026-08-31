@@ -1,6 +1,6 @@
 {
   "name": "recover",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Recover a Claude Code, Pi, or earlier Codex session into Codex — budget-bounded handoff, continue the unfinished task.",
   "skills": "./skills/",
   "interface": {

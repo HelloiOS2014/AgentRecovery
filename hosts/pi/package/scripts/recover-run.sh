@@ -3,7 +3,7 @@
 # then exec it. No python3.
 set -e
 ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-VERSION=0.4.0
+VERSION=0.4.1
 if [ -f "$ROOT/VERSION" ]; then
   VERSION=$(tr -d ' \n' < "$ROOT/VERSION")
 elif [ -f "$ROOT/../VERSION" ]; then

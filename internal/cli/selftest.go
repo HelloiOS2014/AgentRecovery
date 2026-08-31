@@ -46,7 +46,7 @@ func runSelfTest() int {
 	setMtime(arch, "2026-03-04T20:05:38")
 
 	codex := sources.NewCodex([]string{filepath.Join(tmp, "sessions"), filepath.Join(tmp, "archived_sessions")}, filepath.Join(tmp, "session_index.jsonl"))
-	metas, _ := codex.ListSessions(20)
+	metas, _ := codex.ListSessions(20, "")
 	ids := map[string]bool{}
 	for _, m := range metas {
 		ids[m.ID] = true
@@ -68,7 +68,7 @@ func runSelfTest() int {
 			`{"id":"`+sidLegacy+`","thread_name":"2025老会话"}`+"\n",
 	), 0o644)
 	codex.IndexPath = idx
-	metas, _ = codex.ListSessions(20)
+	metas, _ = codex.ListSessions(20, "")
 	byID := map[string]core.SessionMeta{}
 	for _, m := range metas {
 		byID[m.ID] = m
@@ -161,7 +161,7 @@ func runSelfTest() int {
 	pb.WriteString("not-json\n")
 	os.WriteFile(pfile, []byte(pb.String()), 0o644)
 	ps := sources.NewPi(filepath.Join(tmp, "pi-sessions"))
-	pmetas, _ := ps.ListSessions(20)
+	pmetas, _ := ps.ListSessions(20, "")
 	check("pi list finds session", len(pmetas) > 0 && pmetas[0].ID == pid)
 	check("pi title from session_info", len(pmetas) > 0 && pmetas[0].Title == "修报错")
 	psess, _ := ps.ReadSession(pid)
@@ -182,6 +182,30 @@ func runSelfTest() int {
 		check("pi toolCall paired by toolCallId", ok)
 		check("pi bad line warned", hasSub(psess.Warnings, "坏行"))
 	}
+
+	// current-project sessions must survive even when older than the global top-N
+	oldID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	newID := "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+	proj := filepath.Join(tmp, "projects", "-Users-demo")
+	os.MkdirAll(proj, 0o755)
+	writeUser := func(path, cwd, text string) {
+		line, _ := json.Marshal(map[string]any{
+			"type": "user", "cwd": cwd, "timestamp": "2026-01-01T00:00:00Z",
+			"message": map[string]any{"role": "user", "content": text},
+		})
+		os.WriteFile(path, append(line, '\n'), 0o644)
+	}
+	oldP := filepath.Join(proj, oldID+".jsonl")
+	newP := filepath.Join(proj, newID+".jsonl")
+	writeUser(oldP, "/Users/demo", "本项目旧会话")
+	writeUser(newP, "/Users/other", "其它项目新会话")
+	setMtime(oldP, "2026-01-01T00:00:00")
+	setMtime(newP, "2026-08-31T23:00:00")
+	cs := sources.NewClaude(filepath.Join(tmp, "projects"))
+	one, _ := cs.ListSessions(1, "/Users/demo")
+	check("prefer cwd kept when older than global newest", len(one) == 1 && one[0].ID == oldID)
+	two, _ := cs.ListSessions(2, "/Users/demo")
+	check("prefer cwd listed first", len(two) == 2 && two[0].ID == oldID && two[1].ID == newID)
 
 	check("recover-self is claude only", strings.Join(sources.TargetNames("claude", true), ",") == "claude")
 	check("recover lists every other source", strings.Join(sources.TargetNames("claude", false), ",") == "codex,pi")

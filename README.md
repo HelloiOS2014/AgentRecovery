@@ -202,7 +202,7 @@ go build -o scripts/recover ./cmd/recover
 ./scripts/recover self-test
 ./scripts/pack-codex-plugin.sh          # copy launcher + self-test
 ./scripts/build-release.sh              # dist/ binaries for GitHub Releases
-git tag v0.4.0 && git push --tags       # CI uploads darwin/linux amd64+arm64
+git tag v0.4.1 && git push --tags       # CI uploads darwin/linux amd64+arm64
 ```
 
 Marketplaces: `.claude-plugin/` (Claude Code) and `.agents/plugins/`

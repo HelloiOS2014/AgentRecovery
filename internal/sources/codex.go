@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -109,7 +108,7 @@ func isoSec(mtime time.Time) string {
 	return mtime.Format("2006-01-02T15:04:05")
 }
 
-func (c *Codex) ListSessions(limit int) ([]core.SessionMeta, error) {
+func (c *Codex) ListSessions(limit int, preferCwd string) ([]core.SessionMeta, error) {
 	type hit struct {
 		path  string
 		mtime time.Time
@@ -151,22 +150,13 @@ func (c *Codex) ListSessions(limit int) ([]core.SessionMeta, error) {
 		}
 	}
 	titles := c.LoadTitles()
-	var metas []core.SessionMeta
+	var hits []fileHit
 	for sid, h := range found {
-		metas = append(metas, core.SessionMeta{
-			ID:        sid,
-			Title:     titles[sid],
-			UpdatedAt: isoSec(h.mtime),
-		})
+		hits = append(hits, fileHit{ID: sid, Path: h.path, Mtime: h.mtime.UnixNano()})
 	}
-	sort.Slice(metas, func(i, j int) bool { return metas[i].UpdatedAt > metas[j].UpdatedAt })
-	if limit > 0 && len(metas) > limit {
-		metas = metas[:limit]
-	}
-	for i := range metas {
-		metas[i].Cwd = firstCwd(found[metas[i].ID].path)
-	}
-	return metas, nil
+	return selectHits(hits, limit, preferCwd, func(path, id string) core.SessionMeta {
+		return core.SessionMeta{ID: id, Title: titles[id], Cwd: firstCwd(path)}
+	}), nil
 }
 
 func (c *Codex) ReadSession(id string) (*core.Session, error) {
