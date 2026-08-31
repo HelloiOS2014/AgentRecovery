@@ -2,19 +2,22 @@
 """AgentRecovery CLI — recover sessions from other agents into Claude Code.
 
 Usage:
-  python3 recover.py list [--limit N]
-  python3 recover.py show <session-id> [--recent N]
+  python3 recover.py list [--self] [--json] [--limit N]
+  python3 recover.py show <session-id> [--recent N] [--self] [--json]
   python3 recover.py self-test
-"""
-import os
-import re
-import sys
-from typing import List, Optional
 
-from core import (CAPS, DEFAULT_RECENT, Event, FILE_TOOL_HINTS_CLAUDE, FILE_TOOL_HINTS_CODEX,
-                  FILELIST_CAP, HIST_BUDGET, HIST_TURNS, RECENT_BUDGET, Session, SessionMeta,
-                  TRUNC, _file_changes, _truncate, render_session)
-from sources import SOURCES, Session, Event
+/recover lists every non-Claude source (Codex, Pi, …).
+/recover-self lists Claude Code's own sessions.
+"""
+import json
+import os
+import sys
+from typing import Dict, List, Optional
+
+from core import (DEFAULT_RECENT, Event, FILE_TOOL_HINTS_CLAUDE, FILE_TOOL_HINTS_CODEX,
+                  FILE_TOOL_HINTS_PI, Session, SessionMeta, _file_changes, _truncate,
+                  render_session)
+from sources import SOURCES, Source, collect_metas, target_names
 
 ARCHIVE_DIR = os.path.join(os.path.expanduser("~"), ".claude", "recover-handoffs")
 
@@ -33,8 +36,7 @@ def _sort_by_current(metas: List["SessionMeta"], cur: str) -> List["SessionMeta"
     return metas
 
 
-# /recover targets the OTHER agent's sessions; /recover-self targets our own.
-OTHER = "codex"
+# /recover targets every other agent; /recover-self targets our own.
 SELF = "claude"
 
 
@@ -43,89 +45,151 @@ def _instances() -> Dict[str, Source]:
 
 
 def _hints_for(src_name: str) -> tuple:
-    return FILE_TOOL_HINTS_CLAUDE if src_name == "claude" else FILE_TOOL_HINTS_CODEX
+    if src_name == "claude":
+        return FILE_TOOL_HINTS_CLAUDE
+    if src_name == "pi":
+        return FILE_TOOL_HINTS_PI
+    return FILE_TOOL_HINTS_CODEX
 
 
-def _pick(srcs: Dict[str, Source], self_mode: bool) -> tuple:
-    name = SELF if self_mode else OTHER
-    return name, srcs[name]
+def _meta_json(m: SessionMeta, cur: str) -> dict:
+    return {
+        "source": m.source,
+        "id": m.id,
+        "title": m.title,
+        "cwd": m.cwd,
+        "updated_at": m.updated_at,
+        "started_at": m.started_at,
+        "model": m.model,
+        "current": _is_current(m.cwd, cur),
+    }
 
 
-def cmd_list(limit: int, self_mode: bool = False) -> int:
+def _fail(msg: str, as_json: bool, code: int) -> int:
+    if as_json:
+        print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False))
+    else:
+        print(msg)
+    return code
+
+
+def cmd_list(limit: int, self_mode: bool = False, as_json: bool = False) -> int:
     srcs = _instances()
-    name, src = _pick(srcs, self_mode)
+    names = target_names(SELF, self_mode)
     cur = os.getcwd()
-    try:
-        metas = _sort_by_current(src.list_sessions(limit), cur)
-    except PermissionError:
-        print("❌ 无权限读取 %s 会话目录（沙箱/权限拦截，不是空列表）" % name)
-        return 2
-    except OSError as err:
-        print("❌ 读取 %s 会话目录失败：%s" % (name, err))
-        return 2
+    metas, blocked = collect_metas(srcs, names, limit)
+    metas = _sort_by_current(metas, cur)
+    if as_json:
+        payload = {
+            "ok": bool(metas),
+            "sessions": [_meta_json(m, cur) for m in metas],
+            "blocked": blocked,
+        }
+        if not metas:
+            payload["error"] = (
+                "permission blocked: " + ",".join(blocked) if blocked else "no sessions"
+            )
+        print(json.dumps(payload, ensure_ascii=False))
+        if metas:
+            return 0
+        return 2 if blocked else 1
     if not metas:
-        print("未检测到 %s 会话（目录不存在或为空）。" % name)
+        if blocked:
+            print("❌ 无权限读取 %s 会话目录（沙箱/权限拦截，不是空列表）" % "/".join(blocked))
+            return 2
+        print("未检测到 %s 会话（目录不存在或为空）。" % "/".join(names))
         return 1
-    print("[%s] 最近 %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % (name, len(metas)))
+    if blocked:
+        print("⚠️ 无法读取：%s" % ", ".join(blocked))
+    print("[%s] 最近 %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % (
+        "/".join(names), len(metas)))
     for i, m in enumerate(metas, 1):
         title = m.title or "无标题"
         mark = "*" if _is_current(m.cwd, cur) else " "
-        print("%s%3d. %-28s %s  cwd=%s  (%s)" % (
-            mark, i, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
+        print("%s%3d. [%s] %-24s %s  cwd=%s  (%s)" % (
+            mark, i, m.source or "?", title[:24], (m.updated_at or "")[:16], m.cwd or "?", m.id))
     print("\n用法：/recover <序号> 或 /recover <完整session ID>（跨源自动识别）")
     return 0
 
 
-def cmd_show(session_id: str, recent: int, self_mode: bool = False) -> int:
+def cmd_show(session_id: str, recent: int, self_mode: bool = False, as_json: bool = False) -> int:
     srcs = _instances()
+    name: Optional[str] = None
+    src: Optional[Source] = None
     if session_id.isdigit() and int(session_id) >= 1:
-        name, src = _pick(srcs, self_mode)
-        metas = _sort_by_current(src.list_sessions(20), os.getcwd())
+        names = target_names(SELF, self_mode)
+        metas, _blocked = collect_metas(srcs, names, 20)
+        metas = _sort_by_current(metas, os.getcwd())
         if int(session_id) > len(metas):
-            print("序号 %s 超出范围（有效 1..%d）" % (session_id, len(metas)))
-            return 1
-        session_id = metas[int(session_id) - 1].id
+            return _fail("序号 %s 超出范围（有效 1..%d）" % (session_id, len(metas)), as_json, 1)
+        picked = metas[int(session_id) - 1]
+        session_id = picked.id
+        name, src = picked.source, srcs[picked.source]
     else:
-        # exact session ID: auto-detect across sources (SOURCES order)
-        name, src = None, None
-        for name, src in srcs.items():
+        for cand, inst in srcs.items():
             try:
-                src.read_session(session_id)
+                inst.read_session(session_id)
             except LookupError:
                 continue
             except PermissionError:
-                print("❌ 无权限读取 %s 源（沙箱/权限拦截）" % name)
-                return 2
+                return _fail("❌ 无权限读取 %s 源（沙箱/权限拦截）" % cand, as_json, 2)
+            name, src = cand, inst
             break
-        if name is None:
-            print("未找到会话 %s（已同时搜索 codex 与 claude 会话存储）" % session_id)
-            return 1
+        if name is None or src is None:
+            return _fail("未找到会话 %s（已同时搜索所有会话存储）" % session_id, as_json, 1)
     try:
         session = src.read_session(session_id)
     except LookupError as err:
-        print(str(err))
-        return 1
+        return _fail(str(err), as_json, 1)
     except PermissionError:
-        print("❌ 无权限读取 %s 源（沙箱/权限拦截）" % src_name)
-        return 2
+        return _fail("❌ 无权限读取 %s 源（沙箱/权限拦截）" % name, as_json, 2)
+    session.meta.source = name
+    extra = []
     if session.meta.cwd and not _is_current(session.meta.cwd, os.getcwd()):
-        print("⚠️ 此会话来自其他项目：%s（当前目录：%s），路径请注意核对" % (session.meta.cwd, os.getcwd()))
+        extra.append("此会话来自其他项目：%s（当前目录：%s），路径请注意核对" % (
+            session.meta.cwd, os.getcwd()))
+        if not as_json:
+            print("⚠️ " + extra[-1])
     if not session.meta.title and hasattr(src, "_load_titles"):
-        # 标题只在 list_sessions 注入（codex 索引），read_session 补一次
         title = src._load_titles().get(session_id)
         if title:
             session.meta.title = title
-    text = render_session(session, recent, file_hints=_hints_for(src_name))
-    print(text)
+    text = render_session(session, recent, file_hints=_hints_for(name))
+    archive = None
     try:
         os.makedirs(ARCHIVE_DIR, mode=0o700, exist_ok=True)
         path = os.path.join(ARCHIVE_DIR, session_id + ".md")
         with open(path, "w") as fh:
             fh.write(text)
         os.chmod(path, 0o600)
-        print("\n[存档] %s" % path)
+        archive = path
     except OSError as err:
-        print("[警告] 存档失败：%s" % err)
+        extra.append("存档失败：%s" % err)
+    if as_json:
+        print(json.dumps({
+            "ok": True,
+            "source": name,
+            "id": session_id,
+            "meta": {
+                "title": session.meta.title,
+                "cwd": session.meta.cwd,
+                "model": session.meta.model,
+                "started_at": session.meta.started_at,
+                "updated_at": session.meta.updated_at,
+            },
+            "handoff": text,
+            "warnings": extra + session.warnings,
+            "archive": archive,
+            "compacted": session.compacted,
+        }, ensure_ascii=False))
+        return 0
+    print(text)
+    if archive:
+        print("\n[存档] %s" % archive)
+    else:
+        for w in extra:
+            if w.startswith("存档失败"):
+                print("[警告] %s" % w)
     return 0
 
 
@@ -308,6 +372,93 @@ def run_self_test() -> int:
     hist_out = render_session(Session(meta=SessionMeta(id="h"), events=mega_events), recent=2)
     check("history zone compresses old turns", "第0轮任务" in hist_out)
 
+    # --- PiSource: leaf path, compaction, toolCall pairing ---
+    from sources.pi import PiSource, _uuid_from_filename as _pi_uuid
+    from sources import target_names as _target_names
+    pid = "01234567-89ab-cdef-0123-456789abcdef"
+    pdir = os.path.join(tmp, "pi-sessions", "--Users-demo--")
+    os.makedirs(pdir)
+    pfile = os.path.join(pdir, "2026-08-31T10-00-00-000Z_" + pid + ".jsonl")
+
+    def pline(obj):
+        return json.dumps(obj, ensure_ascii=False) + "\n"
+
+    with open(pfile, "w") as fh:
+        fh.write(pline({"type": "session", "version": 3, "id": pid,
+                        "timestamp": "2026-08-31T10:00:00.000Z", "cwd": "/Users/demo"}))
+        fh.write(pline({"type": "session_info", "id": "n1", "parentId": None,
+                        "timestamp": "2026-08-31T10:00:01.000Z", "name": "修报错"}))
+        fh.write(pline({"type": "message", "id": "a1", "parentId": "n1",
+                        "timestamp": "2026-08-31T10:00:02.000Z",
+                        "message": {"role": "user", "content": [{"type": "text", "text": "主线任务"}]}}))
+        fh.write(pline({"type": "message", "id": "a2", "parentId": "a1",
+                        "timestamp": "2026-08-31T10:00:03.000Z",
+                        "message": {"role": "assistant", "model": "grok-4.6",
+                                     "content": [
+                                         {"type": "thinking", "thinking": "先改文件"},
+                                         {"type": "text", "text": "我来写"},
+                                         {"type": "toolCall", "id": "call_w",
+                                          "name": "write",
+                                          "arguments": {"path": "src/a.py", "content": "x"}}]}}))
+        fh.write(pline({"type": "message", "id": "a3", "parentId": "a2",
+                        "timestamp": "2026-08-31T10:00:04.000Z",
+                        "message": {"role": "toolResult", "toolCallId": "call_w", "toolName": "write",
+                                     "content": [{"type": "text", "text": "wrote"}], "isError": False}}))
+        fh.write(pline({"type": "message", "id": "b1", "parentId": "a1",
+                        "timestamp": "2026-08-31T10:00:05.000Z",
+                        "message": {"role": "user", "content": [{"type": "text", "text": "旁支不要"}]}}))
+        fh.write(pline({"type": "message", "id": "b2", "parentId": "b1",
+                        "timestamp": "2026-08-31T10:00:06.000Z",
+                        "message": {"role": "assistant", "content": [{"type": "text", "text": "旁支回复"}]}}))
+        fh.write(pline({"type": "message", "id": "a4", "parentId": "a3",
+                        "timestamp": "2026-08-31T10:00:07.000Z",
+                        "message": {"role": "user", "content": [{"type": "text", "text": "继续主线"}]}}))
+        fh.write(pline({"type": "message", "id": "a5", "parentId": "a4",
+                        "timestamp": "2026-08-31T10:00:08.000Z",
+                        "message": {"role": "bashExecution", "command": "pwd", "output": "/Users/demo"}}))
+        fh.write("not-json\n")
+
+    ps = PiSource(sessions_dir=os.path.join(tmp, "pi-sessions"))
+    pmetas = ps.list_sessions(20)
+    check("pi list finds session", any(m.id == pid for m in pmetas))
+    check("pi title from session_info", pmetas[0].title == "修报错")
+    check("pi cwd from header", pmetas[0].cwd == "/Users/demo")
+    check("pi uuid from filename", _pi_uuid(os.path.basename(pfile)) == pid)
+    psess = ps.read_session(pid)
+    ptexts = [e.text for e in psess.events]
+    check("pi leaf path drops branch", "旁支不要" not in ptexts and "旁支回复" not in ptexts)
+    check("pi leaf path keeps mainline", "主线任务" in ptexts and "继续主线" in ptexts)
+    paired = [e for e in psess.events if e.kind == "tool_call" and e.text == "write"]
+    check("pi toolCall paired by toolCallId", paired and paired[0].tool_output == "wrote")
+    check("pi bashExecution becomes tool_call", any(e.kind == "tool_call" and e.text == "bash" for e in psess.events))
+    check("pi bad line warned", any("坏行" in w for w in psess.warnings))
+    check("pi file list from write path", "src/a.py" in _file_changes(psess.events, FILE_TOOL_HINTS_PI))
+
+    pid2 = "fedcba98-7654-3210-fedc-ba9876543210"
+    p2 = os.path.join(pdir, "2026-08-31T11-00-00-000Z_" + pid2 + ".jsonl")
+    with open(p2, "w") as fh:
+        fh.write(pline({"type": "session", "version": 3, "id": pid2,
+                        "timestamp": "2026-08-31T11:00:00.000Z", "cwd": "/Users/demo"}))
+        fh.write(pline({"type": "message", "id": "o1", "parentId": None,
+                        "timestamp": "2026-08-31T11:00:01.000Z",
+                        "message": {"role": "user", "content": "压缩前旧任务"}}))
+        fh.write(pline({"type": "compaction", "id": "c1", "parentId": "o1",
+                        "timestamp": "2026-08-31T11:00:02.000Z",
+                        "summary": "旧历史已压缩", "firstKeptEntryId": "n1"}))
+        fh.write(pline({"type": "message", "id": "n1", "parentId": "c1",
+                        "timestamp": "2026-08-31T11:00:03.000Z",
+                        "message": {"role": "user", "content": "压缩后目标"}}))
+    psess2 = ps.read_session(pid2)
+    check("pi compaction drops pre-boundary", "压缩前旧任务" not in [e.text for e in psess2.events])
+    check("pi compaction keeps after", any(e.text == "压缩后目标" for e in psess2.events))
+    check("pi compacted flag", psess2.compacted is True)
+
+    check("recover-self is claude only",
+          _target_names("claude", True) == ["claude"])
+    check("recover lists every other source",
+          _target_names("claude", False) == ["codex", "pi"])
+    check("_hints_for pi", _hints_for("pi") == FILE_TOOL_HINTS_PI)
+
     if failures:
         print("SELF-TEST FAILED: " + ", ".join(failures))
         return 1
@@ -323,16 +474,16 @@ def main(argv: List[str]) -> int:
     if cmd == "self-test":
         return run_self_test()
     if cmd == "list":
-        return cmd_list(20, "--self" in argv)
+        return cmd_list(20, "--self" in argv, "--json" in argv)
     if cmd == "show" and len(argv) >= 3:
-        recent = 10
+        recent = DEFAULT_RECENT
         if "--recent" in argv:
             try:
                 recent = int(argv[argv.index("--recent") + 1])
             except (ValueError, IndexError):
-                print("用法：show <session-id> [--recent N] [--self]")
+                print("用法：show <session-id> [--recent N] [--self] [--json]")
                 return 2
-        return cmd_show(argv[2], recent, "--self" in argv)
+        return cmd_show(argv[2], recent, "--self" in argv, "--json" in argv)
     print(__doc__)
     return 2
 

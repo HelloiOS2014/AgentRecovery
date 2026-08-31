@@ -1,6 +1,6 @@
 """Shared rendering core for AgentRecovery — one source of truth, packed into
-both the Claude Code plugin (scripts/) and the Codex plugin
-(hosts/codex/plugins/recover-claude/scripts/) at release time.
+the Claude Code plugin (scripts/), the Codex plugin, and the Pi package
+at release time.
 
 Hold everything here that both sides must agree on: event/session types,
 render budgets, and the handoff renderer. Anything host-specific (session
@@ -25,6 +25,7 @@ TRUNC = "…(截断)"
 # their own list into render_session/_file_changes.
 FILE_TOOL_HINTS_CODEX = ("write", "apply_patch", "edit")
 FILE_TOOL_HINTS_CLAUDE = ("write", "edit", "multiedit", "notebookedit", "apply_patch")
+FILE_TOOL_HINTS_PI = ("write", "edit")
 
 
 @dataclass
@@ -35,6 +36,7 @@ class SessionMeta:
     started_at: Optional[str] = None
     updated_at: Optional[str] = None
     model: Optional[str] = None
+    source: Optional[str] = None
 
 
 @dataclass
@@ -102,6 +104,8 @@ def render_session(session: Session, recent: int,
         return text[:cap] + TRUNC
 
     lines.append("# 恢复的会话上下文（%s）" % meta.id)
+    if meta.source:
+        lines.append("- 来源：%s" % meta.source)
     lines.append("- 标题：%s" % (meta.title or "无标题"))
     lines.append("- 时间：%s → %s" % ((meta.started_at or "?")[:16], (meta.updated_at or "?")[:16]))
     lines.append("- 原工作目录：`%s`" % (meta.cwd or "?"))

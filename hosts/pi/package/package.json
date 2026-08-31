@@ -1,0 +1,16 @@
+{
+  "name": "agent-recovery-pi",
+  "version": "0.3.0",
+  "description": "Recover Claude Code, Codex, or earlier Pi sessions into Pi with a budget-bounded handoff.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "agent-recovery"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}

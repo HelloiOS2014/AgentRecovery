@@ -1,12 +1,12 @@
 ---
 name: recover
-description: Use when the user wants to recover or continue a Claude Code session in Codex — they say "recover/恢复/继续 Claude Code 会话", "/recover", "resume my Claude session", "pick up where Claude left off", "刚才 Claude 的会话", or paste a Claude Code session UUID. Lists local Claude Code sessions (titles + cwd), renders the picked one as a budget-bounded handoff, and continues the unfinished task. For Codex's own sessions, use /recover-self instead.
+description: Use when the user wants to recover or continue a Claude Code or Pi session in Codex — they say "recover/恢复/继续 Claude Code 会话", "/recover", "resume my Claude/Pi session", "pick up where Claude left off", or paste a session UUID. Lists local non-Codex sessions (titles + cwd, tagged [claude]/[pi]), renders the picked one as a budget-bounded handoff, and continues the unfinished task. For Codex's own sessions, use /recover-self instead.
 ---
 
-# Recover Claude Code Session (Codex)
+# Recover Claude Code / Pi Session (Codex)
 
-The user ran a task in **Claude Code** (CLI or desktop) and wants to continue
-it here in Codex. The recovered handoff text lands in this conversation as
+The user ran a task in **Claude Code** or **Pi** and wants to continue it
+here in Codex. The recovered handoff text lands in this conversation as
 tool output — that is the context you continue from.
 
 ## Locate the script

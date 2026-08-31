@@ -1,7 +1,7 @@
 {
   "name": "recover",
-  "version": "0.2.0",
-  "description": "Recover a Codex or Claude Code session into Codex — merged picker over both local session stores, budget-bounded handoff, continue the unfinished task.",
+  "version": "0.3.0",
+  "description": "Recover a Claude Code, Pi, or earlier Codex session into Codex — budget-bounded handoff, continue the unfinished task.",
   "skills": "./skills/",
   "interface": {
     "displayName": "Recover Claude Code Session",

@@ -1,0 +1,15 @@
+{
+  "name": "agent-recovery",
+  "version": "0.3.0",
+  "description": "Recover sessions across Claude Code, Codex, and Pi.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "agent-recovery"
+  ],
+  "pi": {
+    "extensions": [
+      "./hosts/pi/package/src/index.ts"
+    ]
+  }
+}

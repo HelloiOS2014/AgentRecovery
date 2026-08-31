@@ -2,31 +2,31 @@
 """AgentRecovery (Codex side) — recover sessions into Codex.
 
 Usage:
-  python3 recover.py list [--self]
-  python3 recover.py show <session-id|index> [--recent N] [--self]
+  python3 recover.py list [--self] [--json]
+  python3 recover.py show <session-id|index> [--recent N] [--self] [--json]
   python3 recover.py self-test
 
-/recover targets the OTHER agent's sessions (Claude Code, from
-~/.claude/projects); /recover-self targets our own (Codex, from
-~/.codex/sessions). An exact session ID is auto-detected across both stores.
+/recover lists every non-Codex source (Claude Code, Pi, …).
+/recover-self lists Codex's own sessions. An exact session ID is
+auto-detected across all stores.
 
 Exit codes (list):
   0 = listed (may be empty — that is a real empty result)
   1 = nothing found (target session store absent or empty)
   2 = permission/sandbox blocked reading the store — NOT "no sessions"
 """
+import json
 import os
 import sys
 from typing import Dict, List, Optional
 
 from core import (DEFAULT_RECENT, Event, FILE_TOOL_HINTS_CLAUDE, FILE_TOOL_HINTS_CODEX,
-                  FILELIST_CAP, Session, SessionMeta, render_session)
-from sources import SOURCES
+                  FILE_TOOL_HINTS_PI, Session, SessionMeta, render_session)
+from sources import SOURCES, collect_metas, target_names
 
 ARCHIVE_REL = ".recover-handoff"
 
-# /recover targets the OTHER agent's sessions; /recover-self targets our own.
-OTHER = "claude"
+# /recover targets every other agent; /recover-self targets our own.
 SELF = "codex"
 
 
@@ -47,86 +47,148 @@ def _instances() -> Dict[str, object]:
 
 
 def _hints_for(src_name: str) -> tuple:
-    return FILE_TOOL_HINTS_CLAUDE if src_name == "claude" else FILE_TOOL_HINTS_CODEX
+    if src_name == "claude":
+        return FILE_TOOL_HINTS_CLAUDE
+    if src_name == "pi":
+        return FILE_TOOL_HINTS_PI
+    return FILE_TOOL_HINTS_CODEX
 
 
-def _pick(srcs: Dict[str, object], self_mode: bool) -> tuple:
-    name = SELF if self_mode else OTHER
-    return name, srcs[name]
+def _meta_json(m: SessionMeta, cur: str) -> dict:
+    return {
+        "source": m.source,
+        "id": m.id,
+        "title": m.title,
+        "cwd": m.cwd,
+        "updated_at": m.updated_at,
+        "started_at": m.started_at,
+        "model": m.model,
+        "current": _is_current(m.cwd, cur),
+    }
 
 
-def cmd_list(limit: int, self_mode: bool = False) -> int:
+def _fail(msg: str, as_json: bool, code: int) -> int:
+    if as_json:
+        print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False))
+    else:
+        print(msg)
+    return code
+
+
+def cmd_list(limit: int, self_mode: bool = False, as_json: bool = False) -> int:
     srcs = _instances()
-    name, src = _pick(srcs, self_mode)
+    names = target_names(SELF, self_mode)
     cur = os.getcwd()
-    try:
-        metas = _sort_by_current(src.list_sessions(limit), cur)
-    except PermissionError:
-        print("❌ 无权限读取 %s 会话目录 —— 沙箱可能拦截了对该 agent 存储的访问；"
-              "这不是「没有会话」。" % name)
-        return 2
-    except OSError as err:
-        print("❌ 读取 %s 会话目录失败：%s" % (name, err))
-        return 2
+    metas, blocked = collect_metas(srcs, names, limit)
+    metas = _sort_by_current(metas, cur)
+    if as_json:
+        payload = {
+            "ok": bool(metas),
+            "sessions": [_meta_json(m, cur) for m in metas],
+            "blocked": blocked,
+        }
+        if not metas:
+            payload["error"] = (
+                "permission blocked: " + ",".join(blocked) if blocked else "no sessions"
+            )
+        print(json.dumps(payload, ensure_ascii=False))
+        if metas:
+            return 0
+        return 2 if blocked else 1
     if not metas:
-        print("未检测到 %s 会话（目录不存在或为空）。" % name)
+        if blocked:
+            print("❌ 无权限读取 %s 会话目录 —— 沙箱可能拦截了对该 agent 存储的访问；"
+                  "这不是「没有会话」。" % "/".join(blocked))
+            return 2
+        print("未检测到 %s 会话（目录不存在或为空）。" % "/".join(names))
         return 1
-    print("[%s] 最近 %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % (name, len(metas)))
+    if blocked:
+        print("⚠️ 无法读取：%s" % ", ".join(blocked))
+    print("[%s] 最近 %d 个会话：输入序号或粘贴完整 session ID（* = 当前项目）" % (
+        "/".join(names), len(metas)))
     for i, m in enumerate(metas, 1):
         title = m.title or "无标题"
         mark = "*" if _is_current(m.cwd, cur) else " "
-        print("%s%3d. %-28s %s  cwd=%s  (%s)" % (
-            mark, i, title[:28], (m.updated_at or "")[:16], m.cwd or "?", m.id))
+        print("%s%3d. [%s] %-24s %s  cwd=%s  (%s)" % (
+            mark, i, m.source or "?", title[:24], (m.updated_at or "")[:16], m.cwd or "?", m.id))
     print("\n用法：/recover <序号> 或 /recover <完整session ID>（跨源自动识别）")
     return 0
 
 
-def cmd_show(session_id: str, recent: int, self_mode: bool = False) -> int:
+def cmd_show(session_id: str, recent: int, self_mode: bool = False, as_json: bool = False) -> int:
     srcs = _instances()
+    name: Optional[str] = None
+    src = None
     if session_id.isdigit() and int(session_id) >= 1:
-        name, src = _pick(srcs, self_mode)
-        metas = _sort_by_current(src.list_sessions(20), os.getcwd())
+        names = target_names(SELF, self_mode)
+        metas, _blocked = collect_metas(srcs, names, 20)
+        metas = _sort_by_current(metas, os.getcwd())
         if int(session_id) > len(metas):
-            print("序号 %s 超出范围（有效 1..%d）" % (session_id, len(metas)))
-            return 1
-        session_id = metas[int(session_id) - 1].id
+            return _fail("序号 %s 超出范围（有效 1..%d）" % (session_id, len(metas)), as_json, 1)
+        picked = metas[int(session_id) - 1]
+        session_id = picked.id
+        name, src = picked.source, srcs[picked.source]
     else:
-        # exact session ID: auto-detect across sources (SOURCES order)
-        name, src = None, None
-        for name, src in srcs.items():
+        for cand, inst in srcs.items():
             try:
-                src.read_session(session_id)
+                inst.read_session(session_id)
             except LookupError:
                 continue
             except PermissionError:
-                print("❌ 无权限读取 %s 源（沙箱/权限拦截）" % name)
-                return 2
+                return _fail("❌ 无权限读取 %s 源（沙箱/权限拦截）" % cand, as_json, 2)
+            name, src = cand, inst
             break
-        if name is None:
-            print("未找到会话 %s（已同时搜索 codex 与 claude 会话存储）" % session_id)
-            return 1
+        if name is None or src is None:
+            return _fail("未找到会话 %s（已同时搜索所有会话存储）" % session_id, as_json, 1)
     try:
         session = src.read_session(session_id)
     except LookupError as err:
-        print(str(err))
-        return 1
+        return _fail(str(err), as_json, 1)
     except PermissionError:
-        print("❌ 无权限读取 %s 源（沙箱/权限拦截）" % src_name)
-        return 2
+        return _fail("❌ 无权限读取 %s 源（沙箱/权限拦截）" % name, as_json, 2)
+    session.meta.source = name
+    extra = []
     if session.meta.cwd and not _is_current(session.meta.cwd, os.getcwd()):
-        print("⚠️ 此会话来自其他项目：%s（当前目录：%s），路径请注意核对"
-              % (session.meta.cwd, os.getcwd()))
-    text = render_session(session, recent, file_hints=_hints_for(src_name))
-    print(text)
+        extra.append("此会话来自其他项目：%s（当前目录：%s），路径请注意核对"
+                     % (session.meta.cwd, os.getcwd()))
+        if not as_json:
+            print("⚠️ " + extra[-1])
+    text = render_session(session, recent, file_hints=_hints_for(name))
+    archive = None
     try:
         os.makedirs(ARCHIVE_REL, mode=0o700, exist_ok=True)
         path = os.path.join(ARCHIVE_REL, session_id + ".md")
         with open(path, "w") as fh:
             fh.write(text)
         os.chmod(path, 0o600)
-        print("\n[存档] %s（工作区内，沙箱可写）" % path)
+        archive = path
     except OSError as err:
-        print("[警告] 存档失败：%s（不影响已输出的恢复上下文）" % err)
+        extra.append("存档失败：%s" % err)
+    if as_json:
+        print(json.dumps({
+            "ok": True,
+            "source": name,
+            "id": session_id,
+            "meta": {
+                "title": session.meta.title,
+                "cwd": session.meta.cwd,
+                "model": session.meta.model,
+                "started_at": session.meta.started_at,
+                "updated_at": session.meta.updated_at,
+            },
+            "handoff": text,
+            "warnings": extra + session.warnings,
+            "archive": archive,
+            "compacted": session.compacted,
+        }, ensure_ascii=False))
+        return 0
+    print(text)
+    if archive:
+        print("\n[存档] %s（工作区内，沙箱可写）" % archive)
+    else:
+        for w in extra:
+            if w.startswith("存档失败"):
+                print("[警告] %s（不影响已输出的恢复上下文）" % w)
     return 0
 
 
@@ -302,16 +364,15 @@ def run_self_test() -> int:
     check("codex source parses its own session",
           any("codex 会话任务" in (e.text or "") for e in cses.events))
 
-    # mode picking: /recover -> other agent (claude), /recover-self -> own (codex)
-    instances = {"codex": cs, "claude": src}
-    check("recover targets other source (claude)",
-          _pick(instances, self_mode=False)[0] == "claude")
-    check("recover-self targets own source (codex)",
-          _pick(instances, self_mode=True)[0] == "codex")
-    check("_hints_for picks claude hints", _hints_for("claude") == FILE_TOOL_HINTS_CLAUDE
-          and _hints_for("codex") == FILE_TOOL_HINTS_CODEX)
-    check("self mode lists own sessions",
-          any(m.id == cid for m in _pick(instances, True)[1].list_sessions(20)))
+    check("recover-self is codex only", target_names("codex", True) == ["codex"])
+    check("recover lists every other source",
+          "codex" not in target_names("codex", False)
+          and "claude" in target_names("codex", False)
+          and "pi" in target_names("codex", False))
+    check("_hints_for picks claude/pi hints", _hints_for("claude") == FILE_TOOL_HINTS_CLAUDE
+          and _hints_for("codex") == FILE_TOOL_HINTS_CODEX
+          and _hints_for("pi") == FILE_TOOL_HINTS_PI)
+    check("self mode lists own sessions", any(m.id == cid for m in cs.list_sessions(20)))
 
     if failures:
         print("SELF-TEST FAILED: " + ", ".join(failures))
@@ -328,16 +389,16 @@ def main(argv: List[str]) -> int:
     if cmd == "self-test":
         return run_self_test()
     if cmd == "list":
-        return cmd_list(20, "--self" in argv)
+        return cmd_list(20, "--self" in argv, "--json" in argv)
     if cmd == "show" and len(argv) >= 3:
         recent = DEFAULT_RECENT
         if "--recent" in argv:
             try:
                 recent = int(argv[argv.index("--recent") + 1])
             except (ValueError, IndexError):
-                print("用法：show <session-id> [--recent N] [--self]")
+                print("用法：show <session-id> [--recent N] [--self] [--json]")
                 return 2
-        return cmd_show(argv[2], recent, "--self" in argv)
+        return cmd_show(argv[2], recent, "--self" in argv, "--json" in argv)
     print(__doc__)
     return 2
 

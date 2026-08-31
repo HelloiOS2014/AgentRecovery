@@ -1,12 +1,12 @@
 ---
 name: recover
-description: Resume a Codex session inside Claude Code — recover conversation context from a local Codex session (paste a session ID or pick from a list) and continue the unfinished task. Use when the user says they were working in Codex and need to switch/continue here, invokes /recover, or pastes a codex session ID. For Claude Code's own sessions, use /recover-self instead.
+description: Resume a Codex or Pi session inside Claude Code — recover conversation context from a local session (paste a session ID or pick from a list) and continue the unfinished task. Use when the user says they were working in Codex or Pi and need to switch/continue here, invokes /recover, or pastes a session ID. For Claude Code's own sessions, use /recover-self instead.
 ---
 
-# Recover Codex Session
+# Recover Codex / Pi Session
 
-User ran a task in Codex (desktop or CLI) and must continue it here. The
-recovered context is injected into this conversation by this skill.
+User ran a task in Codex or Pi and must continue it here. The recovered
+context is injected into this conversation by this skill.
 
 ## Locate the script (version-safe)
 
@@ -41,8 +41,8 @@ python3 "$RECOVER_PY" show <session-id> --recent 10
 ```
 
 (If the user's session was recent, use `--recent 10`; no flag needed
-otherwise. A full session ID is auto-detected across both stores even though
-the picker only lists Codex sessions.)
+otherwise. A full session ID is auto-detected across Codex, Pi, and Claude
+stores. The picker lists non-Claude sessions, tagged `[codex]` / `[pi]`.)
 
 3. **After the handoff is in the conversation**, follow these rules:
    - Summarize to the user in 3-5 lines: session title, original working

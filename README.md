@@ -1,18 +1,19 @@
 # AgentRecovery — cross-agent session recovery
 
-Two independent plugins, one repo:
+One repo, three hosts:
 
-- **`recover`** (Claude Code marketplace, `.claude-plugin/`) — in Claude
-  Code: `/recover` resumes a **Codex** session, `/recover-self` resumes an
-  earlier Claude Code session.
-- **`recover`** (Codex marketplace, `.agents/plugins/`) — in Codex:
-  `/recover` resumes a **Claude Code** session, `/recover-self` resumes an
-  earlier Codex session.
+- **Claude Code** (`.claude-plugin/`) — `/recover` resumes a **Codex or Pi**
+  session; `/recover-self` resumes an earlier Claude Code session.
+- **Codex** (`.agents/plugins/` → `hosts/codex/`) — `/recover` resumes a
+  **Claude Code or Pi** session; `/recover-self` resumes an earlier Codex
+  session.
+- **Pi** (`hosts/pi/package/`) — native `/recover` and `/recover-self`
+  (TUI picker + injected handoff, not a skill).
 
-Two plugins, symmetric: `/recover` always targets the **other** agent's
-sessions, `/recover-self` targets the **same** agent's sessions. Both share
-the render core and session parsers (`scripts/core.py` + `scripts/sources/`,
-packed into the Codex plugin by `scripts/pack-codex-plugin.sh`).
+`/recover` always targets **other** agents, `/recover-self` targets the
+**same** agent. All three share the render core and parsers
+(`scripts/core.py` + `scripts/sources/`, packed by
+`scripts/pack-codex-plugin.sh`).
 
 ---
 
@@ -23,6 +24,7 @@ packed into the Codex plugin by `scripts/pack-codex-plugin.sh`).
 ```bash
 codex resume               # Codex: picker；codex resume <uuid> 任意项目；--last 续最近
 claude --continue          # Claude Code: 续最近会话；--resume 当前项目 picker
+pi -c / pi -r / /resume    # Pi: 续最近；-r 与 /resume 只列当前项目
 ```
 
 原生 resume 恢复完整会话文件。`/recover-self` 在两种场景下补充原生能力：
@@ -40,7 +42,7 @@ picker 单源（recover 只列对方、recover-self 只列自己），当前项�
 
 ## Claude Code side: `/recover` + `/recover-self`
 
-Resume a **Codex** session (`/recover`) or an earlier Claude Code session
+Resume a **Codex or Pi** session (`/recover`) or an earlier Claude Code session
 (`/recover-self`) inside Claude Code. When quota runs out mid-task in another
 agent, or you want to start fresh without rebuilding context: the matching
 command lists the relevant sessions (or takes a session ID) and injects a
@@ -74,8 +76,8 @@ auto-detected across both stores.
 
 ### How it works
 
-- Reads local Codex session files (`~/.codex/sessions/**` and
-  `~/.codex/archived_sessions/`) — no cloud calls, no Codex API.
+- Reads local Codex (`~/.codex/sessions/**`, `~/.codex/archived_sessions/`)
+  and Pi (`~/.pi/agent/sessions/`) session files — no cloud calls.
 - Parser: keeps user/assistant messages and tool calls (paired by `call_id`);
   strips Codex-injected wrapper blocks (`<environment_context>`,
   `<recommended_plugins>`); keeps inline annotations like `<redacted>`;
@@ -106,7 +108,7 @@ the render warns not to forward it. No content redaction is performed.
 
 ## Codex side: `/recover` + `/recover-self`
 
-Recover a **Claude Code** session (`/recover`) or an earlier **Codex**
+Recover a **Claude Code or Pi** session (`/recover`) or an earlier **Codex**
 session (`/recover-self`) into Codex. When quota runs out in Claude Code, you
 want to finish here, or you want a fresh Codex session to continue an older
 one, the plugin lists the relevant sessions (titles + `cwd=`, current-project
@@ -166,19 +168,45 @@ handoff，然后从上次停下的地方继续任务。
 - Runs `python3` — in Codex Desktop, `python3` must be on the non-interactive
   PATH. First run triggers permission approvals; the skill stops cleanly if
   they are denied (never uses sandbox bypass flags).
-- The render core (`scripts/core.py`) is shared with the Claude Code plugin;
-  `scripts/pack-codex-plugin.sh` syncs the copy and runs both sides'
-  self-tests. Run it after changing the core.
+- The render core (`scripts/core.py`) is shared with the Claude Code plugin
+  and the Pi package; `scripts/pack-codex-plugin.sh` syncs the copies and
+  runs every host's self-test. Run it after changing the core.
+
+## Pi side: `/recover` + `/recover-self`
+
+Native Pi commands (extension, not a skill). `/recover` lists Claude Code
+and Codex sessions; `/recover-self` lists earlier Pi sessions as a
+budget-bounded handoff. Use `/resume` / `pi -r` when you want a lossless
+reload of the current project.
+
+### Install
+
+```bash
+pi install git:github.com/HelloiOS2014/AgentRecovery
+```
+
+Requires `python3` on PATH (stdlib only).
+
+### Usage
+
+- `/recover` — pick a Claude Code or Codex session (TUI), inject handoff, continue
+- `/recover-self` — same for an earlier Pi session (any project)
+- `/recover <session-id>` — skip the picker
+
+The picker pins the current project (`*`) and tags each row `[claude]` /
+`[codex]`. Handoff is archived to `.recover-handoff/<id>.md` in the workspace.
 
 ## Development
 
 ```bash
 python3 scripts/recover.py self-test                          # Claude Code side
 python3 hosts/codex/plugins/recover/scripts/recover.py self-test          # Codex side
-./scripts/pack-codex-plugin.sh                                # sync core + double self-test
+python3 hosts/pi/package/scripts/recover.py self-test                     # Pi side
+./scripts/pack-codex-plugin.sh                                # sync core + all self-tests
 ```
 
 Marketplaces: `.claude-plugin/` (Claude Code) and `.agents/plugins/`
-(Codex). Local test: `claude plugin marketplace add ./` (bare `.` rejected —
-use `./` or an absolute path) and `codex plugin marketplace add <abs-path>`
-(this codex version rejects `./` — use an absolute path).
+(Codex). Pi uses `pi install`. Local test: `claude plugin marketplace add ./`
+(bare `.` rejected — use `./` or an absolute path) and
+`codex plugin marketplace add <abs-path>` (this codex version rejects `./` —
+use an absolute path).
