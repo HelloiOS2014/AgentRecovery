@@ -56,6 +56,14 @@ function run(args: string[]): { code: number; stdout: string; stderr: string } {
 	};
 }
 
+function projectName(cwd?: string | null): string {
+	if (!cwd) {
+		return "?";
+	}
+	const parts = cwd.replace(/[/\\]+$/, "").split(/[/\\]/);
+	return parts[parts.length - 1] || cwd;
+}
+
 function parseJson<T>(raw: string): T | null {
 	const start = raw.indexOf("{");
 	if (start < 0) {
@@ -100,10 +108,11 @@ export default function (pi: ExtensionAPI) {
 			const items = data.sessions.map((s) => {
 				const mark = s.current ? "*" : " ";
 				const src = s.source || "?";
-				const title = (s.title || "无标题").slice(0, 40);
-				return `${mark}[${src}] ${title}  cwd=${s.cwd || "?"}  (${s.id})`;
+				const proj = projectName(s.cwd);
+				const title = (s.title || "无标题").replace(/\s+/g, " ").slice(0, 32);
+				return `${mark}[${src}] ${proj} — ${title} (${s.id})`;
 			});
-			const picked = await ctx.ui.select("选择要恢复的会话", items);
+			const picked = await ctx.ui.select("选择会话（* = 当前项目）", items);
 			if (!picked) {
 				return;
 			}
